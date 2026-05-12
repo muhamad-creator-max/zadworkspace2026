@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -67,10 +67,6 @@ export default function LoginPage() {
         <button className="btn btn-primary w-full" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
-
-        <p className="mt-4 text-center text-xs" style={{ color: "var(--muted)" }}>
-          Default admin: <b>admin</b> / <b>123123</b>
-        </p>
 
         <p className="mt-4 text-center text-xs">
           <span style={{ color: "var(--muted)" }}>Don't have access? </span>
