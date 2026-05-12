@@ -1,0 +1,158 @@
+"use client";
+import { createClient } from "@/lib/supabase/client";
+import type { Invoice, Plan, Subscriber } from "@/lib/types";
+
+const sb = () => createClient();
+
+// ----- Plans -----
+export async function listPlans(): Promise<Plan[]> {
+  const { data, error } = await sb()
+    .from("plans")
+    .select("*")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as Plan[];
+}
+
+export type PlanInput = Omit<
+  Plan,
+  "id" | "created_at" | "updated_at" | "deleted_at"
+>;
+
+export async function createPlan(input: PlanInput) {
+  const { data, error } = await sb().from("plans").insert(input).select().single();
+  if (error) throw error;
+  return data as Plan;
+}
+
+export async function updatePlan(id: string, input: PlanInput) {
+  const { data, error } = await sb()
+    .from("plans")
+    .update(input)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Plan;
+}
+
+export async function softDeletePlan(id: string) {
+  const { error } = await sb()
+    .from("plans")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+// ----- Subscribers -----
+export async function listSubscribers(): Promise<Subscriber[]> {
+  const { data, error } = await sb()
+    .from("subscribers")
+    .select("*, plan:plans(*)")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as Subscriber[];
+}
+
+async function nextCodeForLetter(letter: string): Promise<string> {
+  const upper = letter.toUpperCase();
+  const { data } = await sb()
+    .from("subscribers")
+    .select("code")
+    .ilike("code", `${upper}%`)
+    .order("code", { ascending: false })
+    .limit(1);
+  let n = 1;
+  if (data && data.length) {
+    const last = data[0].code;
+    const numPart = parseInt(last.replace(/[^0-9]/g, ""), 10);
+    if (!isNaN(numPart)) n = numPart + 1;
+  }
+  return `${upper}${String(n).padStart(3, "0")}`;
+}
+
+export type CreateSubscriberInput = {
+  name: string;
+  phone: string;
+  plan: Plan;
+  payment_method: string;
+};
+
+export async function createSubscriber(
+  input: CreateSubscriberInput
+): Promise<{ subscriber: Subscriber; invoice: Invoice }> {
+  const code = await nextCodeForLetter(input.plan.letter);
+  const startsAt = new Date();
+  const expiresAt = new Date(
+    startsAt.getTime() + input.plan.expiration_days * 86400000
+  );
+
+  const { data: sub, error } = await sb()
+    .from("subscribers")
+    .insert({
+      code,
+      name: input.name,
+      phone: input.phone,
+      plan_id: input.plan.id,
+      payment_method: input.payment_method,
+      total_price: input.plan.price,
+      total_hours: input.plan.hours,
+      hours_remaining: input.plan.hours,
+      starts_at: startsAt.toISOString(),
+      expires_at: expiresAt.toISOString(),
+    })
+    .select("*, plan:plans(*)")
+    .single();
+  if (error) throw error;
+
+  // Create subscription invoice
+  const { data: invoice, error: e2 } = await sb()
+    .from("invoices")
+    .insert({
+      kind: "subscription",
+      subscriber_id: sub.id,
+      customer_name: `${input.name} (${code})`,
+      items: [
+        {
+          name: `${input.plan.name} subscription (${input.plan.hours}h, ${input.plan.expiration_days}d)`,
+          qty: 1,
+          price: Number(input.plan.price),
+          total: Number(input.plan.price),
+        },
+      ],
+      session_amount: 0,
+      orders_amount: 0,
+      total_amount: Number(input.plan.price),
+      payment_method: input.payment_method,
+      created_by: "admin",
+    })
+    .select()
+    .single();
+  if (e2) throw e2;
+
+  return { subscriber: sub as Subscriber, invoice: invoice as Invoice };
+}
+
+export async function updateSubscriber(
+  id: string,
+  patch: Partial<Pick<Subscriber, "name" | "phone" | "payment_method">>
+) {
+  const { data, error } = await sb()
+    .from("subscribers")
+    .update(patch)
+    .eq("id", id)
+    .select("*, plan:plans(*)")
+    .single();
+  if (error) throw error;
+  return data as Subscriber;
+}
+
+export async function softDeleteSubscriber(id: string) {
+  const { error } = await sb()
+    .from("subscribers")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
