@@ -1,6 +1,7 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
 import type { Room } from "@/lib/types";
+import { currentActor, logDeletion } from "@/lib/deleteLog";
 
 const sb = () => createClient();
 
@@ -40,9 +41,18 @@ export async function updateRoom(id: string, input: RoomInput) {
 }
 
 export async function softDeleteRoom(id: string) {
+  const { data: room } = await sb().from("rooms").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
   const { error } = await sb()
     .from("rooms")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  await logDeletion({
+    entity_type: "room",
+    entity_id: id,
+    entity_label: room?.name ?? null,
+    snapshot: room,
+    deleted_by,
+  });
 }

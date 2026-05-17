@@ -2,8 +2,9 @@
 import { useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, Users } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { useAdminGuard } from "@/hooks/useAdminGuard";
 import { RoomFormModal } from "@/features/rooms/RoomFormModal";
 import { listRooms, softDeleteRoom } from "@/features/rooms/api";
 import type { Room } from "@/lib/types";
@@ -11,6 +12,7 @@ import { money } from "@/lib/format";
 
 export default function RoomsPage() {
   const { push } = useToast();
+  const isAdmin = useAdminGuard();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Room | null>(null);
@@ -28,18 +30,6 @@ export default function RoomsPage() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      await softDeleteRoom(deleteTarget.id);
-      push({ kind: "ok", msg: "Room removed" });
-      setDeleteTarget(null);
-      refresh();
-    } catch (e: any) {
-      push({ kind: "err", msg: e.message });
-    }
-  };
 
   return (
     <>
@@ -59,8 +49,15 @@ export default function RoomsPage() {
             <RoomCard
               key={r.id}
               room={r}
+              isAdmin={isAdmin}
               onEdit={() => setEditTarget(r)}
-              onDelete={() => setDeleteTarget(r)}
+              onDelete={() => {
+                if (!isAdmin) {
+                  push({ kind: "err", msg: "Only an Admin can delete records." });
+                  return;
+                }
+                setDeleteTarget(r);
+              }}
             />
           ))}
           {!rooms.length && (
@@ -78,25 +75,28 @@ export default function RoomsPage() {
         initial={editTarget}
         onSaved={refresh}
       />
-      <ConfirmDialog
+      <PasswordConfirmDialog
         open={!!deleteTarget}
         title="Remove room?"
-        message="The room will be hidden from new sessions but past sessions remain intact."
+        message={`"${deleteTarget?.name}" will be hidden from new sessions. Past sessions stay intact.`}
         confirmLabel="Remove"
-        destructive
         onCancel={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
+        onConfirmed={async () => {
+          await softDeleteRoom(deleteTarget!.id);
+          push({ kind: "ok", msg: "Room removed" });
+          setDeleteTarget(null);
+          refresh();
+        }}
       />
     </>
   );
 }
 
 function RoomCard({
-  room,
-  onEdit,
-  onDelete,
+  room, isAdmin, onEdit, onDelete,
 }: {
   room: Room;
+  isAdmin: boolean | null;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -123,6 +123,7 @@ function RoomCard({
           <button
             className="rounded-lg bg-white/15 p-1.5 hover:bg-white/25"
             onClick={onDelete}
+            disabled={isAdmin === null}
             aria-label="Delete"
           >
             <Trash2 className="h-3.5 w-3.5" />

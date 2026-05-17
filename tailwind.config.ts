@@ -14,6 +14,15 @@ const config: Config = {
           danger: "#FAA9A9",
           success: "#D0FFB6",
         },
+        // Chart palette — distinct, readable on both light and dark backgrounds.
+        // Access via var(--chart-1) … var(--chart-5) in CSS, or Tailwind bg-chart-1 etc.
+        chart: {
+          1: "var(--chart-1)", // teal-blue   — Sessions
+          2: "var(--chart-2)", // amber        — Orders
+          3: "var(--chart-3)", // violet       — Subscriptions
+          4: "var(--chart-4)", // rose         — extra series
+          5: "var(--chart-5)", // sky          — extra series
+        },
       },
       boxShadow: {
         soft: "0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.06)",

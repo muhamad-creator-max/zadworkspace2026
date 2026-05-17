@@ -1,13 +1,14 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, User, Phone, CheckCircle, AlertCircle } from "lucide-react";
+import { Lock, User, Phone, CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { submitAccessRequestAction } from "@/features/staff/actions";
 
 export default function AccessRequestPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -115,15 +116,18 @@ export default function AccessRequestPage() {
             <div>
               <label className="label">Password *</label>
               <div className="flex items-center gap-2 rounded-xl border px-3 py-2 mt-1" style={{ borderColor: "var(--border)" }}>
-                <Lock className="h-4 w-4" style={{ color: "var(--muted)" }} />
+                <Lock className="h-4 w-4 shrink-0" style={{ color: "var(--muted)" }} />
                 <input
-                  type="password"
+                  type={showPw ? "text" : "password"}
                   className="flex-1 bg-transparent outline-none"
                   placeholder="At least 6 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading}
                 />
+                <button type="button" onClick={() => setShowPw(!showPw)} style={{ color: "var(--muted)" }}>
+                  {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
               <p style={{ color: "var(--muted)" }} className="text-xs mt-1">
                 Minimum 6 characters

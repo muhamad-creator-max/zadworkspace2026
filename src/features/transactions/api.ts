@@ -1,10 +1,42 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
 import type { Invoice } from "@/lib/types";
+import { currentActor, logDeletion } from "@/lib/deleteLog";
 
 const sb = () => createClient();
 
 export type TxKind = "all" | "session" | "subscription" | "orders";
+
+export async function softDeleteInvoice(id: string): Promise<void> {
+  const { data: inv } = await sb().from("invoices").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
+  const now = new Date().toISOString();
+  const { error } = await sb().from("invoices").update({ deleted_at: now }).eq("id", id);
+  if (error) throw error;
+  await logDeletion({
+    entity_type: "invoice",
+    entity_id: id,
+    entity_label: inv?.customer_name ?? null,
+    entity_amount: inv?.total_amount != null ? Number(inv.total_amount) : null,
+    snapshot: inv,
+    deleted_by,
+  });
+}
+
+export async function softDeleteSession(id: string): Promise<void> {
+  const { data: session } = await sb().from("sessions").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
+  const now = new Date().toISOString();
+  const { error } = await sb().from("sessions").update({ deleted_at: now }).eq("id", id);
+  if (error) throw error;
+  await logDeletion({
+    entity_type: "session",
+    entity_id: id,
+    entity_label: session?.customer_name ?? null,
+    snapshot: session,
+    deleted_by,
+  });
+}
 
 export async function listTransactions(opts: {
   from?: string;

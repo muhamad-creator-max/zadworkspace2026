@@ -70,6 +70,15 @@ export interface Subscriber {
   plan?: Plan;
 }
 
+export interface SessionSegment {
+  room_id: string;
+  room_name: string;
+  started_at: ISO;
+  ended_at: ISO;
+  duration_minutes: number;
+  price: number;
+}
+
 export type SessionStatus = "active" | "closed";
 export interface Session {
   id: UUID;
@@ -81,6 +90,8 @@ export interface Session {
   duration_minutes: number | null;
   session_price: number;
   status: SessionStatus;
+  session_segments: SessionSegment[];
+  next_session_note: string | null;
   created_by: string;
   created_at: ISO;
   updated_at: ISO;
@@ -153,4 +164,75 @@ export interface PageAccess {
   staff_id: UUID;
   page_path: string;
   created_at: ISO;
+}
+
+// ── Finance ───────────────────────────────────────────────────────────────────
+
+export interface Expense {
+  id: UUID;
+  name: string;
+  reason: string | null;
+  amount: number;
+  payment_method: string;
+  payment_due: ISO;
+  created_by: string;
+  created_at: ISO;
+  updated_at: ISO;
+  deleted_at: ISO | null;
+}
+
+export interface Income {
+  id: UUID;
+  name: string;
+  reason: string | null;
+  amount: number;
+  payment_method: string;
+  payment_due: ISO;
+  created_by: string;
+  created_at: ISO;
+  updated_at: ISO;
+  deleted_at: ISO | null;
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+
+export type TaskStatus = "not_done" | "done" | "scheduled";
+
+export interface Task {
+  id: UUID;
+  content: string;
+  created_by: UUID;
+  status: TaskStatus;
+  alert_at: ISO | null;
+  pin_enabled: boolean;
+  pin_time: string | null; // 'HH:MM:SS' clock time, applies daily
+  created_at: ISO;
+  updated_at: ISO;
+  deleted_at: ISO | null;
+
+  creator?: StaffMember;
+  assignments?: TaskAssignment[];
+}
+
+export interface TaskAssignment {
+  id: UUID;
+  task_id: UUID;
+  assignee_id: UUID;
+  done_at: ISO | null;
+  last_done_date: string | null; // 'YYYY-MM-DD'
+  created_at: ISO;
+
+  assignee?: StaffMember;
+  task?: Task;
+}
+
+export interface DeleteLogEntry {
+  id: UUID;
+  entity_type: string;
+  entity_id: UUID;
+  entity_label: string | null;
+  entity_amount: number | null;
+  snapshot: unknown;
+  deleted_by: string;
+  deleted_at: ISO;
 }

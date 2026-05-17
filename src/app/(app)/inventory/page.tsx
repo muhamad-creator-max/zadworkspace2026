@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Pencil, Trash2, PackagePlus } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { useAdminGuard } from "@/hooks/useAdminGuard";
 import { ItemFormModal } from "@/features/inventory/ItemFormModal";
 import { RestockModal } from "@/features/inventory/RestockModal";
 import { CATEGORIES, listItems, softDeleteItem } from "@/features/inventory/api";
@@ -19,6 +20,7 @@ const CATEGORY_COLORS: Record<ItemCategory, string> = {
 
 export default function InventoryPage() {
   const { push } = useToast();
+  const isAdmin = useAdminGuard();
   const [items, setItems] = useState<Item[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Item | null>(null);
@@ -46,16 +48,12 @@ export default function InventoryPage() {
     return g;
   }, [items]);
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      await softDeleteItem(deleteTarget.id);
-      push({ kind: "ok", msg: "Item removed" });
-      setDeleteTarget(null);
-      refresh();
-    } catch (e: any) {
-      push({ kind: "err", msg: e.message });
+  const requestDelete = (item: Item) => {
+    if (!isAdmin) {
+      push({ kind: "err", msg: "Only an Admin can delete records." });
+      return;
     }
+    setDeleteTarget(item);
   };
 
   return (
@@ -87,7 +85,7 @@ export default function InventoryPage() {
                     key={i.id}
                     item={i}
                     onEdit={() => setEditTarget(i)}
-                    onDelete={() => setDeleteTarget(i)}
+                    onDelete={() => requestDelete(i)}
                     onRestock={() => setRestockTarget(i)}
                   />
                 ))}
@@ -115,14 +113,18 @@ export default function InventoryPage() {
         item={restockTarget}
         onSaved={refresh}
       />
-      <ConfirmDialog
+      <PasswordConfirmDialog
         open={!!deleteTarget}
         title="Remove item?"
-        message="The item will be hidden from inventory but past orders remain intact."
+        message={`"${deleteTarget?.name}" will be hidden from inventory. Past orders remain intact.`}
         confirmLabel="Remove"
-        destructive
         onCancel={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
+        onConfirmed={async () => {
+          await softDeleteItem(deleteTarget!.id);
+          push({ kind: "ok", msg: "Item removed" });
+          setDeleteTarget(null);
+          refresh();
+        }}
       />
     </>
   );

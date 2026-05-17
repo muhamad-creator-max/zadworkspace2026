@@ -6,6 +6,7 @@ import { Topbar } from "@/components/layout/Topbar";
 import { CustomerFormModal } from "@/features/customers/CustomerFormModal";
 import { StartSessionModal } from "@/features/sessions/StartSessionModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import {
   listCustomers,
   listSubscribers,
@@ -15,6 +16,7 @@ import {
 } from "@/features/customers/api";
 import type { Customer, Subscriber } from "@/lib/types";
 import { useToast } from "@/components/ui/Toast";
+import { useAdminGuard } from "@/hooks/useAdminGuard";
 import { dt } from "@/lib/format";
 
 type Hit =
@@ -36,6 +38,7 @@ export default function CustomersPage() {
 
   const router = useRouter();
   const { push } = useToast();
+  const isAdmin = useAdminGuard();
 
   const refresh = async () => {
     const [cs, ss] = await Promise.all([listCustomers(), listSubscribers()]);
@@ -90,16 +93,12 @@ export default function CustomersPage() {
     [query, searching, hits]
   );
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      await softDeleteCustomer(deleteTarget.id);
-      push({ kind: "ok", msg: "Customer removed" });
-      setDeleteTarget(null);
-      refresh();
-    } catch (e: any) {
-      push({ kind: "err", msg: e.message });
+  const requestDelete = (customer: Customer) => {
+    if (!isAdmin) {
+      push({ kind: "err", msg: "Only an Admin can delete records." });
+      return;
     }
+    setDeleteTarget(customer);
   };
 
   return (
@@ -209,7 +208,8 @@ export default function CustomersPage() {
                             </button>
                             <button
                               className="btn btn-ghost !px-2 !py-1 ml-1"
-                              onClick={() => setDeleteTarget(h.c)}
+                              disabled={isAdmin === null}
+                              onClick={() => requestDelete(h.c)}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -250,14 +250,18 @@ export default function CustomersPage() {
         initial={editTarget}
         onSaved={() => refresh()}
       />
-      <ConfirmDialog
+      <PasswordConfirmDialog
         open={!!deleteTarget}
         title="Remove customer?"
         message="The customer will be hidden from lists but past sessions and invoices stay intact."
         confirmLabel="Remove"
-        destructive
         onCancel={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
+        onConfirmed={async () => {
+          await softDeleteCustomer(deleteTarget!.id);
+          push({ kind: "ok", msg: "Customer removed" });
+          setDeleteTarget(null);
+          refresh();
+        }}
       />
       <StartSessionModal
         open={!!startFor}

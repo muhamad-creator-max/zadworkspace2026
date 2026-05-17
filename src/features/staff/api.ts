@@ -1,6 +1,7 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
 import type { StaffMember, AccessRequest, PageAccess } from "@/lib/types";
+import { currentActor, logDeletion } from "@/lib/deleteLog";
 
 const sb = () => createClient();
 
@@ -164,12 +165,20 @@ export async function updateStaffMember(
 }
 
 export async function softDeleteStaffMember(staffId: string): Promise<void> {
+  const { data: member } = await sb().from("staff_members").select("*").eq("id", staffId).single();
+  const deleted_by = await currentActor();
   const { error } = await sb()
     .from("staff_members")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", staffId);
-
   if (error) throw error;
+  await logDeletion({
+    entity_type: "staff_member",
+    entity_id: staffId,
+    entity_label: member?.name ?? null,
+    snapshot: member,
+    deleted_by,
+  });
 }
 
 // ============ PAGE ACCESS ============

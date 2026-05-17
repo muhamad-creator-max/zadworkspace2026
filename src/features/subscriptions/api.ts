@@ -1,6 +1,7 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
 import type { Invoice, Plan, Subscriber } from "@/lib/types";
+import { currentActor, logDeletion } from "@/lib/deleteLog";
 
 const sb = () => createClient();
 
@@ -38,11 +39,21 @@ export async function updatePlan(id: string, input: PlanInput) {
 }
 
 export async function softDeletePlan(id: string) {
+  const { data: plan } = await sb().from("plans").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
   const { error } = await sb()
     .from("plans")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  await logDeletion({
+    entity_type: "plan",
+    entity_id: id,
+    entity_label: plan?.name ?? null,
+    entity_amount: plan?.price != null ? Number(plan.price) : null,
+    snapshot: plan,
+    deleted_by,
+  });
 }
 
 // ----- Subscribers -----
@@ -150,9 +161,18 @@ export async function updateSubscriber(
 }
 
 export async function softDeleteSubscriber(id: string) {
+  const { data: sub } = await sb().from("subscribers").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
   const { error } = await sb()
     .from("subscribers")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  await logDeletion({
+    entity_type: "subscriber",
+    entity_id: id,
+    entity_label: sub ? `${sub.name} (${sub.code})` : null,
+    snapshot: sub,
+    deleted_by,
+  });
 }

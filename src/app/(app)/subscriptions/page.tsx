@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Pencil, Trash2, IdCard } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { useAdminGuard } from "@/hooks/useAdminGuard";
 import { PlanFormModal } from "@/features/subscriptions/PlanFormModal";
 import { SubscriberFormModal } from "@/features/subscriptions/SubscriberFormModal";
 import {
@@ -16,6 +17,7 @@ import { dt, money } from "@/lib/format";
 export default function SubscriptionsPage() {
   const router = useRouter();
   const { push } = useToast();
+  const isAdmin = useAdminGuard();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subs, setSubs] = useState<Subscriber[]>([]);
 
@@ -79,7 +81,11 @@ export default function SubscriptionsPage() {
                     </button>
                     <button
                       className="rounded-lg bg-white/15 p-1.5 hover:bg-white/25"
-                      onClick={() => setPlanDelete(p)}
+                      disabled={isAdmin === null}
+                      onClick={() => {
+                        if (!isAdmin) { push({ kind: "err", msg: "Only an Admin can delete records." }); return; }
+                        setPlanDelete(p);
+                      }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -162,7 +168,14 @@ export default function SubscriptionsPage() {
                           <button className="btn btn-ghost !px-2 !py-1" onClick={() => setSubEdit(s)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
-                          <button className="btn btn-ghost !px-2 !py-1 ml-1" onClick={() => setSubDelete(s)}>
+                          <button
+                            className="btn btn-ghost !px-2 !py-1 ml-1"
+                            disabled={isAdmin === null}
+                            onClick={() => {
+                              if (!isAdmin) { push({ kind: "err", msg: "Only an Admin can delete records." }); return; }
+                              setSubDelete(s);
+                            }}
+                          >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </td>
@@ -192,14 +205,13 @@ export default function SubscriptionsPage() {
         initial={planEdit}
         onSaved={refresh}
       />
-      <ConfirmDialog
+      <PasswordConfirmDialog
         open={!!planDelete}
         title="Remove plan?"
         message="The plan will be hidden but existing subscribers and their invoices stay intact."
         confirmLabel="Remove"
-        destructive
         onCancel={() => setPlanDelete(null)}
-        onConfirm={async () => {
+        onConfirmed={async () => {
           await softDeletePlan(planDelete!.id);
           setPlanDelete(null);
           refresh();
@@ -220,14 +232,13 @@ export default function SubscriptionsPage() {
         initial={subEdit}
         onUpdated={refresh}
       />
-      <ConfirmDialog
+      <PasswordConfirmDialog
         open={!!subDelete}
         title="Remove subscriber?"
         message="The subscriber will be hidden but past sessions and invoices stay intact."
         confirmLabel="Remove"
-        destructive
         onCancel={() => setSubDelete(null)}
-        onConfirm={async () => {
+        onConfirmed={async () => {
           await softDeleteSubscriber(subDelete!.id);
           setSubDelete(null);
           refresh();

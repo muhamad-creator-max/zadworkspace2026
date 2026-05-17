@@ -15,6 +15,13 @@
   --text: #111613;
   --muted: #6B7A6E;
   --border: #E4E7E4;
+
+  /* Chart palette — light mode */
+  --chart-1: #2A9D8F; /* teal      — Sessions      */
+  --chart-2: #E9C46A; /* amber     — Orders        */
+  --chart-3: #7C6FC2; /* violet    — Subscriptions */
+  --chart-4: #E76F51; /* coral     — extra         */
+  --chart-5: #4AB0D9; /* sky blue  — extra         */
 }
 
 .dark {
@@ -23,6 +30,13 @@
   --text: #F1F5F1;
   --muted: #A8B3A9;
   --border: #243027;
+
+  /* Chart palette — dark mode (slightly lighter/more vivid for dark surfaces) */
+  --chart-1: #3BBCAE;
+  --chart-2: #F4D06F;
+  --chart-3: #9E91D8;
+  --chart-4: #F08468;
+  --chart-5: #62C3E8;
 }
 
 html, body {

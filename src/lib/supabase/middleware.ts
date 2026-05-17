@@ -12,6 +12,8 @@ const PROTECTED_PAGES = [
   "/staff",
   "/checkout",
   "/invoice",
+  "/tasks",
+  "/delete-log",
 ];
 
 export async function updateSession(request: NextRequest) {
@@ -46,6 +48,7 @@ export async function updateSession(request: NextRequest) {
   const isPublic =
     pathname.startsWith("/login") ||
     pathname.startsWith("/access-request") ||
+    pathname.startsWith("/blocked") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon");
 
@@ -99,7 +102,7 @@ export async function updateSession(request: NextRequest) {
 
       if (!access) {
         const url = request.nextUrl.clone();
-        url.pathname = "/dashboard";
+        url.pathname = "/blocked";
         return NextResponse.redirect(url);
       }
     }

@@ -1,20 +1,32 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Play, Plus, LogOut } from "lucide-react";
+import { Search, Play, Plus, LogOut, AlertCircle, Bell, CheckCircle2, Circle, Pin, User, ListTodo } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { searchPeople, findActiveSessionForPerson } from "@/features/customers/api";
 import { listActiveSessions } from "@/features/sessions/api";
+import { getLastSessionNote } from "@/features/checkout/api";
 import { StartSessionModal } from "@/features/sessions/StartSessionModal";
 import { AddOrdersModal } from "@/features/sessions/AddOrdersModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
-import type { Customer, Session, Subscriber } from "@/lib/types";
+import type { Customer, Session, Subscriber, Task, TaskAssignment } from "@/lib/types";
 import { dt, formatDuration, minutesBetween } from "@/lib/format";
+import { listMyDashboardTasks, toggleAssignmentDone } from "@/features/tasks/api";
+import { TaskStatusBadge } from "@/features/tasks/TaskStatusBadge";
+import { getCurrentStaffMember } from "@/features/staff/api";
+
+const RTL_RE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+const detectDir = (s: string): "rtl" | "ltr" => (RTL_RE.test(s) ? "rtl" : "ltr");
+
+type DashboardTask = Task & {
+  my_assignment: TaskAssignment;
+  creator?: { id: string; name: string; email: string };
+};
 
 type Hit =
-  | { kind: "customer"; c: Customer; activeSessionId?: string }
-  | { kind: "subscriber"; s: Subscriber; activeSessionId?: string };
+  | { kind: "customer"; c: Customer; activeSessionId?: string; note: string | null }
+  | { kind: "subscriber"; s: Subscriber; activeSessionId?: string; note: string | null };
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -25,6 +37,27 @@ export default function DashboardPage() {
   const [startFor, setStartFor] = useState<Hit | null>(null);
   const [addOrdersFor, setAddOrdersFor] = useState<Session | null>(null);
   const [checkoutFor, setCheckoutFor] = useState<Session | null>(null);
+  const [myTasks, setMyTasks] = useState<DashboardTask[]>([]);
+  const [myStaffId, setMyStaffId] = useState<string | null>(null);
+
+  const refreshMyTasks = async () => {
+    try {
+      const list = await listMyDashboardTasks();
+      setMyTasks(list);
+    } catch {
+      // silent — dashboard should still work without tasks loaded
+    }
+  };
+
+  const onCheckTask = async (t: DashboardTask) => {
+    try {
+      await toggleAssignmentDone(t.my_assignment.id, true);
+      setMyTasks((prev) => prev.filter((x) => x.id !== t.id));
+      push({ kind: "ok", msg: "Task marked done" });
+    } catch (e: any) {
+      push({ kind: "err", msg: e.message });
+    }
+  };
 
   const refreshSessions = async () => {
     try {
@@ -35,9 +68,15 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    getCurrentStaffMember().then((s) => setMyStaffId(s?.id ?? null)).catch(() => {});
     refreshSessions();
+    refreshMyTasks();
     const t = setInterval(refreshSessions, 30000);
-    return () => clearInterval(t);
+    const tt = setInterval(refreshMyTasks, 60000);
+    return () => {
+      clearInterval(t);
+      clearInterval(tt);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -50,16 +89,20 @@ export default function DashboardPage() {
     const t = setTimeout(async () => {
       const { customers, subscribers } = await searchPeople(query.trim());
       const enriched: Hit[] = await Promise.all([
-        ...customers.map(async (c) => ({
-          kind: "customer" as const,
-          c,
-          activeSessionId: (await findActiveSessionForPerson({ customer_id: c.id }))?.id,
-        })),
-        ...subscribers.map(async (s) => ({
-          kind: "subscriber" as const,
-          s,
-          activeSessionId: (await findActiveSessionForPerson({ subscriber_id: s.id }))?.id,
-        })),
+        ...customers.map(async (c) => {
+          const [active, note] = await Promise.all([
+            findActiveSessionForPerson({ customer_id: c.id }),
+            getLastSessionNote({ customer_id: c.id }),
+          ]);
+          return { kind: "customer" as const, c, activeSessionId: active?.id, note };
+        }),
+        ...subscribers.map(async (s) => {
+          const [active, note] = await Promise.all([
+            findActiveSessionForPerson({ subscriber_id: s.id }),
+            getLastSessionNote({ subscriber_id: s.id }),
+          ]);
+          return { kind: "subscriber" as const, s, activeSessionId: active?.id, note };
+        }),
       ]);
       setHits(enriched);
     }, 250);
@@ -114,37 +157,63 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={i}
-                      className="flex flex-wrap items-center gap-3 rounded-xl border p-2.5"
-                      style={{ borderColor: "var(--border)" }}
+                      className="rounded-xl border overflow-hidden"
+                      style={{ borderColor: h.note ? "var(--brand)" : "var(--border)" }}
                     >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{name}</span>
-                          {isSub ? (
-                            <span className="badge" style={{ background: "var(--brand)", color: "#fff" }}>
-                              Subscriber · {h.s.code}
-                            </span>
-                          ) : (
-                            <span className="badge" style={{ background: "var(--border)" }}>
-                              Customer
-                            </span>
-                          )}
+                      <div className="flex flex-wrap items-center gap-3 p-2.5">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{name}</span>
+                            {isSub ? (
+                              <span className="badge" style={{ background: "var(--brand)", color: "#fff" }}>
+                                Subscriber · {h.s.code}
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ background: "var(--border)" }}>
+                                Customer
+                              </span>
+                            )}
+                            {h.note && (
+                              <AlertCircle
+                                className="h-4 w-4 shrink-0"
+                                style={{ color: "var(--brand)" }}
+                                aria-label="Has note"
+                              />
+                            )}
+                          </div>
+                          <div className="text-xs" style={{ color: "var(--muted)" }}>
+                            {phone} • {study}
+                          </div>
                         </div>
-                        <div className="text-xs" style={{ color: "var(--muted)" }}>
-                          {phone} • {study}
-                        </div>
+                        {h.activeSessionId ? (
+                          <button
+                            className="btn btn-danger"
+                            onClick={() => router.push(`/checkout/${h.activeSessionId}`)}
+                          >
+                            <LogOut className="h-4 w-4" /> Checkout
+                          </button>
+                        ) : (
+                          <button className="btn btn-primary" onClick={() => setStartFor(h)}>
+                            <Play className="h-4 w-4" /> Check in
+                          </button>
+                        )}
                       </div>
-                      {h.activeSessionId ? (
-                        <button
-                          className="btn btn-danger"
-                          onClick={() => router.push(`/checkout/${h.activeSessionId}`)}
+                      {h.note && (
+                        <div
+                          className="flex items-start gap-2 border-t px-3 py-2"
+                          style={{
+                            borderColor: "var(--brand)",
+                            background: "rgba(53,74,55,0.06)",
+                          }}
                         >
-                          <LogOut className="h-4 w-4" /> Checkout
-                        </button>
-                      ) : (
-                        <button className="btn btn-primary" onClick={() => setStartFor(h)}>
-                          <Play className="h-4 w-4" /> Check in
-                        </button>
+                          <AlertCircle
+                            className="h-3.5 w-3.5 mt-0.5 shrink-0"
+                            style={{ color: "var(--brand)" }}
+                          />
+                          <p className="text-xs leading-relaxed" style={{ color: "var(--text)" }}>
+                            {h.note}
+                          </p>
+                        </div>
                       )}
                     </div>
                   );
@@ -153,6 +222,126 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        {/* MY ACTIVE TASKS */}
+        {myTasks.length > 0 && (
+          <div className="mt-6 mx-auto max-w-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg"
+                  style={{ background: "rgba(53, 74, 55, 0.1)", color: "var(--brand)" }}
+                >
+                  <ListTodo className="h-4 w-4" />
+                </span>
+                <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
+                  Your tasks right now
+                </h2>
+              </div>
+              <span
+                className="badge"
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  color: "var(--muted)",
+                }}
+              >
+                {myTasks.length} active
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {myTasks.map((t) => {
+                const dir = detectDir(t.content);
+                const isRTL = dir === "rtl";
+                const creatorName = t.creator?.id === myStaffId ? "You" : t.creator?.name ?? "—";
+                return (
+                  <div
+                    key={t.id}
+                    className="card relative overflow-hidden"
+                    style={{ borderLeft: "3px solid var(--brand)" }}
+                  >
+                    <div className="p-3.5">
+                      <div className="flex items-start gap-3">
+                        <button
+                          onClick={() => onCheckTask(t)}
+                          className="mt-0.5 shrink-0 rounded-full transition hover:opacity-70"
+                          style={{ color: "var(--brand)" }}
+                          title="Mark done"
+                          aria-label="Mark done"
+                        >
+                          <Circle className="h-5 w-5" />
+                        </button>
+
+                        <div className="min-w-0 flex-1">
+                          {/* Status + chips row */}
+                          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                            <TaskStatusBadge status={t.status} size="sm" />
+                            {t.pin_enabled && t.pin_time && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium"
+                                style={{
+                                  background: "rgba(53, 74, 55, 0.08)",
+                                  color: "var(--brand)",
+                                  border: "1px solid rgba(53, 74, 55, 0.2)",
+                                }}
+                              >
+                                <Pin className="h-3 w-3" /> Daily
+                              </span>
+                            )}
+                            {t.alert_at && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium"
+                                style={{
+                                  background: "rgba(245, 158, 11, 0.12)",
+                                  color: "#92400E",
+                                  border: "1px solid rgba(245, 158, 11, 0.3)",
+                                }}
+                              >
+                                <Bell className="h-3 w-3" /> {dt(t.alert_at)}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Content */}
+                          <div
+                            dir={dir}
+                            style={{
+                              textAlign: isRTL ? "right" : "left",
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                            }}
+                            className="text-sm leading-relaxed font-medium"
+                          >
+                            {t.content}
+                          </div>
+
+                          {/* Creator footer */}
+                          <div
+                            className="mt-2 flex items-center gap-1.5 text-[11px]"
+                            style={{ color: "var(--muted)" }}
+                          >
+                            <User className="h-3 w-3" />
+                            <span>
+                              Assigned by <span style={{ color: "var(--text)" }}>{creatorName}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          className="btn btn-success !py-1.5 !px-3 shrink-0"
+                          onClick={() => onCheckTask(t)}
+                          title="Mark done"
+                        >
+                          <CheckCircle2 className="h-4 w-4" /> Done
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ROOM BOARD */}
         <div className="mt-6">

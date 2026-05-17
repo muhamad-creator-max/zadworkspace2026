@@ -9,11 +9,13 @@ import type { StaffMember, PageAccess } from "@/lib/types";
 const AVAILABLE_PAGES = [
   { path: "/dashboard", label: "Dashboard" },
   { path: "/customers", label: "Customers" },
+  { path: "/tasks", label: "Tasks" },
   { path: "/sessions", label: "Sessions" },
   { path: "/rooms", label: "Rooms" },
   { path: "/inventory", label: "Inventory" },
   { path: "/subscriptions", label: "Subscriptions" },
   { path: "/transactions", label: "Transactions & Orders" },
+  { path: "/delete-log", label: "Delete Log" },
   { path: "/staff", label: "Staff & Access Control" },
 ];
 

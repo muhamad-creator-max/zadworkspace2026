@@ -5,8 +5,7 @@ import { useToast } from "@/components/ui/Toast";
 import { createSubscriber, listPlans, updateSubscriber } from "./api";
 import type { Plan, Subscriber } from "@/lib/types";
 import { money } from "@/lib/format";
-
-const METHODS = ["Cash", "Card", "Mobile Wallet", "Instapay"];
+import { PaymentMethodPicker } from "@/components/ui/PaymentMethodPicker";
 
 export function SubscriberFormModal({
   open, onClose, initial, onCreated, onUpdated,
@@ -117,14 +116,8 @@ export function SubscriberFormModal({
         )}
 
         <div>
-          <label className="label">Payment method</label>
-          <select
-            className="input mt-1"
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
-          >
-            {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          <label className="label mb-2 block">Payment method</label>
+          <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} />
         </div>
 
         {!initial && plan && (

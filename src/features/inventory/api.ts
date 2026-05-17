@@ -1,6 +1,7 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, ItemCategory } from "@/lib/types";
+import { currentActor, logDeletion } from "@/lib/deleteLog";
 
 const sb = () => createClient();
 
@@ -49,11 +50,21 @@ export async function updateItem(id: string, input: Partial<ItemInput>) {
 }
 
 export async function softDeleteItem(id: string) {
+  const { data: item } = await sb().from("items").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
   const { error } = await sb()
     .from("items")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  await logDeletion({
+    entity_type: "inventory_item",
+    entity_id: id,
+    entity_label: item?.name ?? null,
+    entity_amount: item?.price != null ? Number(item.price) : null,
+    snapshot: item,
+    deleted_by,
+  });
 }
 
 export async function restockItem(item: Item, quantity: number) {

@@ -1,6 +1,7 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
 import type { Customer, Subscriber } from "@/lib/types";
+import { currentActor, logDeletion } from "@/lib/deleteLog";
 
 const sb = () => createClient();
 
@@ -69,11 +70,20 @@ export async function updateCustomer(id: string, patch: Partial<Customer>) {
 }
 
 export async function softDeleteCustomer(id: string) {
+  const { data: customer } = await sb().from("customers").select("*").eq("id", id).single();
+  const deleted_by = await currentActor();
   const { error } = await sb()
     .from("customers")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  await logDeletion({
+    entity_type: "customer",
+    entity_id: id,
+    entity_label: customer?.name ?? null,
+    snapshot: customer,
+    deleted_by,
+  });
 }
 
 export async function findActiveSessionForPerson(opts: {

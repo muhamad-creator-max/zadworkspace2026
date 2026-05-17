@@ -2,8 +2,9 @@
 import { useEffect, useState } from "react";
 import { Check, X, Pencil, Trash2, Clock } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { useAdminGuard } from "@/hooks/useAdminGuard";
 import {
   getCurrentStaffMember,
   listAccessRequests,
@@ -19,6 +20,7 @@ import { AccessControlModal } from "@/features/staff/AccessControlModal";
 
 export default function StaffPage() {
   const { push } = useToast();
+  const isAdmin = useAdminGuard();
   const [currentStaff, setCurrentStaff] = useState<StaffMember | null>(null);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
@@ -79,16 +81,12 @@ export default function StaffPage() {
     }
   };
 
-  const handleDelete = async () => {
-    try {
-      if (!deletingStaff) return;
-      await softDeleteStaffMember(deletingStaff.id);
-      push({ kind: "ok", msg: `Removed ${deletingStaff.name}` });
-      setStaffMembers(staffMembers.filter((s) => s.id !== deletingStaff.id));
-      setDeletingStaff(null);
-    } catch (e: any) {
-      push({ kind: "err", msg: e.message });
+  const requestDeleteStaff = (staff: StaffMember) => {
+    if (!isAdmin) {
+      push({ kind: "err", msg: "Only an Admin can delete records." });
+      return;
     }
+    setDeletingStaff(staff);
   };
 
   if (loading) {
@@ -202,7 +200,8 @@ export default function StaffPage() {
                         {staff.role !== "admin" && (
                           <button
                             className="btn btn-ghost !px-2 !py-1 ml-1"
-                            onClick={() => setDeletingStaff(staff)}
+                            disabled={isAdmin === null}
+                            onClick={() => requestDeleteStaff(staff)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -225,14 +224,18 @@ export default function StaffPage() {
       </div>
 
       {/* DIALOGS */}
-      <ConfirmDialog
+      <PasswordConfirmDialog
         open={!!deletingStaff}
         title="Remove staff member?"
         message={`${deletingStaff?.name} will be removed from the system.`}
         confirmLabel="Remove"
-        destructive
         onCancel={() => setDeletingStaff(null)}
-        onConfirm={handleDelete}
+        onConfirmed={async () => {
+          await softDeleteStaffMember(deletingStaff!.id);
+          push({ kind: "ok", msg: `Removed ${deletingStaff!.name}` });
+          setStaffMembers(staffMembers.filter((s) => s.id !== deletingStaff!.id));
+          setDeletingStaff(null);
+        }}
       />
 
       {editingStaff && (
