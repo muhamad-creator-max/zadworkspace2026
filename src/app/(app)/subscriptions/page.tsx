@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Pencil, Trash2, IdCard } from "lucide-react";
+import { Plus, Pencil, Trash2, IdCard, RefreshCw } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { useAdminGuard } from "@/hooks/useAdminGuard";
 import { PlanFormModal } from "@/features/subscriptions/PlanFormModal";
 import { SubscriberFormModal } from "@/features/subscriptions/SubscriberFormModal";
+import { RenewModal } from "@/features/subscriptions/RenewModal";
 import {
   listPlans, listSubscribers, softDeletePlan, softDeleteSubscriber,
 } from "@/features/subscriptions/api";
@@ -28,6 +29,7 @@ export default function SubscriptionsPage() {
   const [subAddOpen, setSubAddOpen] = useState(false);
   const [subEdit, setSubEdit] = useState<Subscriber | null>(null);
   const [subDelete, setSubDelete] = useState<Subscriber | null>(null);
+  const [subRenew, setSubRenew] = useState<Subscriber | null>(null);
 
   const refresh = async () => {
     try {
@@ -146,6 +148,11 @@ export default function SubscriptionsPage() {
                 <tbody>
                   {subs.map((s) => {
                     const expired = new Date(s.expires_at) < new Date();
+                    const hoursLeft = Number(s.hours_remaining);
+                    const totalHours = Number(s.total_hours);
+                    const usedPct = totalHours > 0 ? ((totalHours - hoursLeft) / totalHours) * 100 : 100;
+                    const isAlert = usedPct >= 80;
+                    const isExhausted = hoursLeft <= 0;
                     return (
                       <tr key={s.id}>
                         <td>
@@ -157,7 +164,30 @@ export default function SubscriptionsPage() {
                         <td className="font-medium">{s.name}</td>
                         <td>{s.phone}</td>
                         <td>{s.plan?.name ?? "—"}</td>
-                        <td>{Number(s.hours_remaining).toFixed(1)} / {s.total_hours}h</td>
+                        <td style={{ minWidth: 140 }}>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <div
+                                className="h-2 w-full rounded-full overflow-hidden"
+                                style={{ background: "var(--border)" }}
+                              >
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{
+                                    width: `${Math.min(100, Math.max(0, (hoursLeft / totalHours) * 100))}%`,
+                                    background: isAlert || isExhausted ? "#EF4444" : "var(--brand)",
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            <span
+                              className="text-xs whitespace-nowrap"
+                              style={{ color: isAlert || isExhausted ? "#EF4444" : "var(--muted)" }}
+                            >
+                              {hoursLeft.toFixed(1)}h / {totalHours}h
+                            </span>
+                          </div>
+                        </td>
                         <td>
                           {expired
                             ? <span className="badge" style={{ background: "#FAA9A9", color: "#5a1414" }}>Expired</span>
@@ -165,7 +195,14 @@ export default function SubscriptionsPage() {
                         </td>
                         <td>{s.payment_method}</td>
                         <td className="text-right">
-                          <button className="btn btn-ghost !px-2 !py-1" onClick={() => setSubEdit(s)}>
+                          <button
+                            className="btn btn-ghost !px-2 !py-1"
+                            title="Renew subscription"
+                            onClick={() => setSubRenew(s)}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </button>
+                          <button className="btn btn-ghost !px-2 !py-1 ml-1" onClick={() => setSubEdit(s)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
                           <button
@@ -244,6 +281,18 @@ export default function SubscriptionsPage() {
           refresh();
         }}
       />
+
+      {subRenew && (
+        <RenewModal
+          open={!!subRenew}
+          onClose={() => setSubRenew(null)}
+          subscriber={subRenew}
+          onRenewed={(invoiceId) => {
+            refresh();
+            router.push(`/invoice/${invoiceId}`);
+          }}
+        />
+      )}
     </>
   );
 }

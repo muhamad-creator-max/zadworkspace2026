@@ -92,12 +92,20 @@ export async function updateSession(request: NextRequest) {
       // Admins always have full access
       if (staff.role === "admin") return response;
 
+      // /checkout and /invoice are part of the Dashboard check-in/out flow —
+      // they have no nav entry and are only reached from the Dashboard, so
+      // gate them on Dashboard access rather than a separate grant.
+      const requiredPage =
+        matchedPage === "/checkout" || matchedPage === "/invoice"
+          ? "/dashboard"
+          : matchedPage;
+
       // Check page_access table for non-admins
       const { data: access } = await sb
         .from("page_access")
         .select("id")
         .eq("staff_id", staff.id)
-        .eq("page_path", matchedPage)
+        .eq("page_path", requiredPage)
         .single();
 
       if (!access) {

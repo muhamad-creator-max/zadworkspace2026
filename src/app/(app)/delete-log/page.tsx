@@ -1,7 +1,7 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Trash2, RefreshCw, Search,
+  Trash2, RefreshCw, Search, RotateCcw,
   Receipt, CalendarClock, User, IdCard,
   BookOpen, DoorOpen, Package, Users, Wallet,
 } from "lucide-react";
@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/Toast";
 import { listDeleteLog } from "@/features/finance/api";
 import type { DeleteLogEntry } from "@/lib/types";
 import { dt, money } from "@/lib/format";
+import { restoreEntities } from "@/lib/deleteLog";
 
 // ─── tab config ──────────────────────────────────────────────────────────────
 
@@ -89,10 +90,11 @@ function Actor({ r }: { r: DeleteLogEntry }) {
 
 // ─── per-type row renderers ───────────────────────────────────────────────────
 
-function InvoiceRow({ r }: { r: DeleteLogEntry }) {
+function InvoiceRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td><TypeBadge type={r.entity_type} /></td>
       <td>
         <div className="font-medium">{s.customer_name ?? "—"}</div>
@@ -116,11 +118,12 @@ function InvoiceRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function SessionRow({ r }: { r: DeleteLogEntry }) {
+function SessionRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   const segments: any[] = s.session_segments ?? [];
   return (
     <tr>
+      {check}
       <td><TypeBadge type={r.entity_type} /></td>
       <td>
         <div className="font-medium">{s.customer_name ?? s.subscriber_name ?? "—"}</div>
@@ -148,10 +151,11 @@ function SessionRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function CustomerRow({ r }: { r: DeleteLogEntry }) {
+function CustomerRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td><TypeBadge type={r.entity_type} /></td>
       <td className="font-medium">{s.name ?? r.entity_label ?? "—"}</td>
       <td>{s.phone ?? "—"}</td>
@@ -161,10 +165,11 @@ function CustomerRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function SubscriberRow({ r }: { r: DeleteLogEntry }) {
+function SubscriberRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td><TypeBadge type={r.entity_type} /></td>
       <td>
         <div className="font-medium">{s.name ?? "—"}</div>
@@ -187,10 +192,11 @@ function SubscriberRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function PlanRow({ r }: { r: DeleteLogEntry }) {
+function PlanRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td>
         <span
           className="badge"
@@ -207,10 +213,11 @@ function PlanRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function RoomRow({ r }: { r: DeleteLogEntry }) {
+function RoomRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td>
         <span
           className="badge"
@@ -226,10 +233,11 @@ function RoomRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function InventoryRow({ r }: { r: DeleteLogEntry }) {
+function InventoryRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td><TypeBadge type={r.entity_type} /></td>
       <td className="font-medium">{s.name ?? r.entity_label ?? "—"}</td>
       <td>
@@ -244,10 +252,11 @@ function InventoryRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function StaffRow({ r }: { r: DeleteLogEntry }) {
+function StaffRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td className="font-medium">{s.name ?? r.entity_label ?? "—"}</td>
       <td>{s.email ?? "—"}</td>
       <td>
@@ -264,11 +273,12 @@ function StaffRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function FinanceRow({ r }: { r: DeleteLogEntry }) {
+function FinanceRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   const isExpense = r.entity_type === "expense";
   return (
     <tr>
+      {check}
       <td>
         <span className="badge" style={{
           background: isExpense ? "#FAA9A9" : "#D0FFB6",
@@ -292,10 +302,11 @@ function FinanceRow({ r }: { r: DeleteLogEntry }) {
   );
 }
 
-function AllRow({ r }: { r: DeleteLogEntry }) {
+function AllRow({ r, check }: { r: DeleteLogEntry; check: React.ReactNode }) {
   const s = snap(r);
   return (
     <tr>
+      {check}
       <td><TypeBadge type={r.entity_type} /></td>
       <td className="font-medium">{r.entity_label ?? "—"}</td>
       <td className="text-sm" style={{ color: "var(--muted)" }}>
@@ -338,17 +349,26 @@ const HEADERS: Record<string, string[]> = {
   finance:      ["Type", "Name", "Amount", "Payment", "Due Date", "Added By", "Deleted By"],
 };
 
-function RowFor({ r, tab }: { r: DeleteLogEntry; tab: string }) {
-  if (tab === "transactions") return <InvoiceRow r={r} />;
-  if (tab === "sessions")     return <SessionRow r={r} />;
-  if (tab === "customers")    return <CustomerRow r={r} />;
-  if (tab === "subscribers")  return <SubscriberRow r={r} />;
-  if (tab === "plans")        return <PlanRow r={r} />;
-  if (tab === "rooms")        return <RoomRow r={r} />;
-  if (tab === "inventory")    return <InventoryRow r={r} />;
-  if (tab === "staff")        return <StaffRow r={r} />;
-  if (tab === "finance")      return <FinanceRow r={r} />;
-  return <AllRow r={r} />;
+function CheckCell({ id, selected, onToggle }: { id: string; selected: boolean; onToggle: (id: string) => void }) {
+  return (
+    <td style={{ width: 36 }} onClick={(e) => e.stopPropagation()}>
+      <input type="checkbox" checked={selected} onChange={() => onToggle(id)} />
+    </td>
+  );
+}
+
+function RowFor({ r, tab, selected, onToggle }: { r: DeleteLogEntry; tab: string; selected: boolean; onToggle: (id: string) => void }) {
+  const check = <CheckCell id={r.id} selected={selected} onToggle={onToggle} />;
+  if (tab === "transactions") return <InvoiceRow r={r} check={check} />;
+  if (tab === "sessions")     return <SessionRow r={r} check={check} />;
+  if (tab === "customers")    return <CustomerRow r={r} check={check} />;
+  if (tab === "subscribers")  return <SubscriberRow r={r} check={check} />;
+  if (tab === "plans")        return <PlanRow r={r} check={check} />;
+  if (tab === "rooms")        return <RoomRow r={r} check={check} />;
+  if (tab === "inventory")    return <InventoryRow r={r} check={check} />;
+  if (tab === "staff")        return <StaffRow r={r} check={check} />;
+  if (tab === "finance")      return <FinanceRow r={r} check={check} />;
+  return <AllRow r={r} check={check} />;
 }
 
 // ─── main page ────────────────────────────────────────────────────────────────
@@ -357,10 +377,12 @@ export default function DeleteLogPage() {
   const { push } = useToast();
   const [rows, setRows] = useState<DeleteLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const currentTab = TABS.find((t) => t.key === activeTab) ?? TABS[0];
 
@@ -399,6 +421,54 @@ export default function DeleteLogPage() {
   }, [rows, currentTab, search]);
 
   const headers = HEADERS[activeTab] ?? HEADERS.all;
+
+  const allVisibleIds = useMemo(() => filteredRows.map((r) => r.id), [filteredRows]);
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        allVisibleIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelected((prev) => new Set([...prev, ...allVisibleIds]));
+    }
+  }
+
+  async function handleRestore() {
+    const toRestore = filteredRows.filter((r) => selected.has(r.id));
+    if (!toRestore.length) return;
+    setRestoring(true);
+    try {
+      const { restored, failed } = await restoreEntities(toRestore);
+      if (restored.length) {
+        push({ kind: "ok", msg: `Restored ${restored.length} ${restored.length === 1 ? "item" : "items"} successfully` });
+        setSelected((prev) => {
+          const next = new Set(prev);
+          restored.forEach((id) => next.delete(id));
+          return next;
+        });
+        await load();
+      }
+      if (failed.length) {
+        push({ kind: "err", msg: `${failed.length} item(s) failed to restore` });
+      }
+    } catch (e: any) {
+      push({ kind: "err", msg: e.message ?? "Restore failed" });
+    } finally {
+      setRestoring(false);
+    }
+  }
 
   return (
     <>
@@ -470,6 +540,16 @@ export default function DeleteLogPage() {
           <button className="btn btn-ghost" onClick={load}>
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
+          {selected.size > 0 && (
+            <button
+              className="btn btn-primary flex items-center gap-1.5"
+              onClick={handleRestore}
+              disabled={restoring}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {restoring ? "Restoring…" : `Restore ${selected.size} selected`}
+            </button>
+          )}
           <span className="text-sm" style={{ color: "var(--muted)" }}>
             {filteredRows.length} {filteredRows.length === 1 ? "entry" : "entries"}
           </span>
@@ -481,6 +561,14 @@ export default function DeleteLogPage() {
             <table className="table-zad">
               <thead>
                 <tr>
+                  <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      title="Select all visible"
+                    />
+                  </th>
                   {headers.map((h) => (
                     <th key={h} className={h === "Total" || h === "Amount" || h === "Price" || h === "Stock" ? "text-right" : ""}>
                       {h}
@@ -490,7 +578,7 @@ export default function DeleteLogPage() {
               </thead>
               <tbody>
                 {filteredRows.map((r) => (
-                  <RowFor key={r.id} r={r} tab={activeTab} />
+                  <RowFor key={r.id} r={r} tab={activeTab} selected={selected.has(r.id)} onToggle={toggleRow} />
                 ))}
                 {!filteredRows.length && (
                   <tr>

@@ -160,6 +160,80 @@ export async function updateSubscriber(
   return data as Subscriber;
 }
 
+export async function listSubscriberInvoices(subscriberId: string): Promise<Invoice[]> {
+  const { data, error } = await sb()
+    .from("invoices")
+    .select("*")
+    .eq("subscriber_id", subscriberId)
+    .is("deleted_at", null)
+    .order("issued_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as Invoice[];
+}
+
+export type RenewInput =
+  | { mode: "same"; subscriberId: string; payment_method: string }
+  | { mode: "switch"; subscriberId: string; plan: Plan; payment_method: string };
+
+export async function renewSubscriber(
+  input: RenewInput
+): Promise<{ subscriber: Subscriber; invoice: Invoice }> {
+  const { data: existing, error: fetchErr } = await sb()
+    .from("subscribers")
+    .select("*, plan:plans(*)")
+    .eq("id", input.subscriberId)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  const plan: Plan = input.mode === "switch" ? input.plan : (existing.plan as Plan);
+  const startsAt = new Date();
+  const expiresAt = new Date(startsAt.getTime() + plan.expiration_days * 86400000);
+
+  const patch: Record<string, unknown> = {
+    plan_id: plan.id,
+    payment_method: input.payment_method,
+    total_price: plan.price,
+    total_hours: plan.hours,
+    hours_remaining: plan.hours,
+    starts_at: startsAt.toISOString(),
+    expires_at: expiresAt.toISOString(),
+  };
+
+  const { data: sub, error: updateErr } = await sb()
+    .from("subscribers")
+    .update(patch)
+    .eq("id", input.subscriberId)
+    .select("*, plan:plans(*)")
+    .single();
+  if (updateErr) throw updateErr;
+
+  const { data: invoice, error: invErr } = await sb()
+    .from("invoices")
+    .insert({
+      kind: "subscription",
+      subscriber_id: sub.id,
+      customer_name: `${sub.name} (${sub.code})`,
+      items: [
+        {
+          name: `${plan.name} renewal (${plan.hours}h, ${plan.expiration_days}d)`,
+          qty: 1,
+          price: Number(plan.price),
+          total: Number(plan.price),
+        },
+      ],
+      session_amount: 0,
+      orders_amount: 0,
+      total_amount: Number(plan.price),
+      payment_method: input.payment_method,
+      created_by: "admin",
+    })
+    .select()
+    .single();
+  if (invErr) throw invErr;
+
+  return { subscriber: sub as Subscriber, invoice: invoice as Invoice };
+}
+
 export async function softDeleteSubscriber(id: string) {
   const { data: sub } = await sb().from("subscribers").select("*").eq("id", id).single();
   const deleted_by = await currentActor();

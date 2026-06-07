@@ -154,11 +154,23 @@ export default function DashboardPage() {
                   const name = isSub ? h.s.name : h.c.name;
                   const phone = isSub ? h.s.phone : h.c.phone;
                   const study = isSub ? "—" : h.c.study || "—";
+
+                  const planExpired = isSub && (
+                    new Date(h.s.expires_at) < new Date() ||
+                    Number(h.s.hours_remaining) <= 0
+                  );
+
                   return (
                     <div
                       key={i}
                       className="rounded-xl border overflow-hidden"
-                      style={{ borderColor: h.note ? "var(--brand)" : "var(--border)" }}
+                      style={{
+                        borderColor: planExpired
+                          ? "#EF4444"
+                          : h.note
+                          ? "var(--brand)"
+                          : "var(--border)",
+                      }}
                     >
                       <div className="flex flex-wrap items-center gap-3 p-2.5">
                         <div className="flex-1 min-w-0">
@@ -173,7 +185,7 @@ export default function DashboardPage() {
                                 Customer
                               </span>
                             )}
-                            {h.note && (
+                            {h.note && !planExpired && (
                               <AlertCircle
                                 className="h-4 w-4 shrink-0"
                                 style={{ color: "var(--brand)" }}
@@ -192,13 +204,31 @@ export default function DashboardPage() {
                           >
                             <LogOut className="h-4 w-4" /> Checkout
                           </button>
+                        ) : planExpired ? (
+                          <button className="btn" disabled style={{ background: "#FEE2E2", color: "#991B1B", cursor: "not-allowed", border: "1px solid #FECACA" }}>
+                            <Play className="h-4 w-4" /> Check in
+                          </button>
                         ) : (
                           <button className="btn btn-primary" onClick={() => setStartFor(h)}>
                             <Play className="h-4 w-4" /> Check in
                           </button>
                         )}
                       </div>
-                      {h.note && (
+                      {planExpired && (
+                        <div
+                          className="flex items-start gap-2 border-t px-3 py-2"
+                          style={{
+                            borderColor: "#EF4444",
+                            background: "#FEF2F2",
+                          }}
+                        >
+                          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: "#EF4444" }} />
+                          <p className="text-xs font-semibold leading-relaxed" style={{ color: "#991B1B" }}>
+                            Plan Expired! Subscriber must renew before checking in.
+                          </p>
+                        </div>
+                      )}
+                      {h.note && !planExpired && (
                         <div
                           className="flex items-start gap-2 border-t px-3 py-2"
                           style={{
