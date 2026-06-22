@@ -69,19 +69,23 @@ export async function listSubscribers(): Promise<Subscriber[]> {
 
 async function nextCodeForLetter(letter: string): Promise<string> {
   const upper = letter.toUpperCase();
+  // Match codes for THIS letter only: the letter prefix followed by digits.
+  // A plain prefix match (e.g. "Z%") would also catch "ZZ001", causing the
+  // numeric series of "Z" and "ZZ" to collide and produce duplicate codes.
   const { data } = await sb()
     .from("subscribers")
     .select("code")
-    .ilike("code", `${upper}%`)
-    .order("code", { ascending: false })
-    .limit(1);
-  let n = 1;
-  if (data && data.length) {
-    const last = data[0].code;
-    const numPart = parseInt(last.replace(/[^0-9]/g, ""), 10);
-    if (!isNaN(numPart)) n = numPart + 1;
+    .ilike("code", `${upper}%`);
+  let max = 0;
+  const exact = new RegExp(`^${upper}(\\d+)$`, "i");
+  for (const row of data ?? []) {
+    const m = exact.exec(row.code ?? "");
+    if (m) {
+      const num = parseInt(m[1], 10);
+      if (!isNaN(num) && num > max) max = num;
+    }
   }
-  return `${upper}${String(n).padStart(3, "0")}`;
+  return `${upper}${String(max + 1).padStart(3, "0")}`;
 }
 
 export type CreateSubscriberInput = {
