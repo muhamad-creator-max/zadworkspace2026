@@ -13,6 +13,7 @@ import {
   Settings,
   Trash2,
   CheckSquare,
+  ClipboardCheck,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -23,6 +24,7 @@ const links = [
   { href: "/dashboard",     label: "Dashboard",     icon: LayoutDashboard },
   { href: "/customers",     label: "Customers",     icon: Users },
   { href: "/tasks",         label: "Tasks",         icon: CheckSquare },
+  { href: "/attendance",    label: "Attendance",    icon: ClipboardCheck },
   { href: "/rooms",         label: "Rooms",         icon: DoorOpen },
   { href: "/inventory",     label: "Inventory",     icon: Package },
   { href: "/subscriptions", label: "Subscriptions", icon: IdCard },

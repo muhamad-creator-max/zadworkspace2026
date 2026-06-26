@@ -13,6 +13,7 @@ const PROTECTED_PAGES = [
   "/checkout",
   "/invoice",
   "/tasks",
+  "/attendance",
   "/delete-log",
 ];
 
@@ -41,7 +42,7 @@ export async function updateSession(request: NextRequest) {
   );
 
   const {
-    data: { user },
+    data: { user: authUser },
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
@@ -51,6 +52,29 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/blocked") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon");
+
+  // A session is only "valid" if the auth user maps to an ACTIVE (non-deleted)
+  // staff member. The client guard (getCurrentStaffMember) enforces the same
+  // rule, so they must agree — otherwise a deleted-but-authenticated user
+  // ping-pongs forever between /dashboard and /login.
+  let staff: { id: string; role: string } | null = null;
+  if (authUser) {
+    const sb = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    const { data } = await sb
+      .from("staff_members")
+      .select("id, role")
+      .eq("user_id", authUser.id)
+      .is("deleted_at", null)
+      .single();
+    staff = data ?? null;
+  }
+
+  // Treat a user with no active staff record as unauthenticated.
+  const user = staff ? authUser : null;
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
@@ -65,7 +89,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Enforce page-level access control for authenticated users
-  if (user) {
+  if (user && staff) {
     const matchedPage = PROTECTED_PAGES.find((p) => pathname.startsWith(p));
     if (matchedPage) {
       const sb = createClient(
@@ -73,21 +97,6 @@ export async function updateSession(request: NextRequest) {
         process.env.SUPABASE_SERVICE_ROLE_KEY!,
         { auth: { autoRefreshToken: false, persistSession: false } }
       );
-
-      // Get staff member
-      const { data: staff } = await sb
-        .from("staff_members")
-        .select("id, role")
-        .eq("user_id", user.id)
-        .is("deleted_at", null)
-        .single();
-
-      // No staff record → deny
-      if (!staff) {
-        const url = request.nextUrl.clone();
-        url.pathname = "/login";
-        return NextResponse.redirect(url);
-      }
 
       // Admins always have full access
       if (staff.role === "admin") return response;

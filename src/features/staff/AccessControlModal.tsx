@@ -10,6 +10,7 @@ const AVAILABLE_PAGES = [
   { path: "/dashboard", label: "Dashboard" },
   { path: "/customers", label: "Customers" },
   { path: "/tasks", label: "Tasks" },
+  { path: "/attendance", label: "Attendance" },
   { path: "/rooms", label: "Rooms" },
   { path: "/inventory", label: "Inventory" },
   { path: "/subscriptions", label: "Subscriptions" },

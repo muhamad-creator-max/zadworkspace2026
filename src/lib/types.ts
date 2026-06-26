@@ -226,6 +226,21 @@ export interface TaskAssignment {
   task?: Task;
 }
 
+// ── Attendance ────────────────────────────────────────────────────────────────
+
+export interface AttendanceEntry {
+  id: UUID;
+  sign_name: string;
+  check_in: ISO;
+  check_out: ISO | null;
+  bank_in: number | null;
+  bank_out: number | null;
+  created_by: UUID | null;
+  created_at: ISO;
+  updated_at: ISO;
+  deleted_at: ISO | null;
+}
+
 export interface DeleteLogEntry {
   id: UUID;
   entity_type: string;
