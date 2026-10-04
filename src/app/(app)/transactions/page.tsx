@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/Toast";
 import { PasswordConfirmDialog } from "@/components/ui/PasswordConfirmDialog";
 import { AdminDeleteButton } from "@/components/ui/AdminDeleteButton";
 import { useAdminGuard } from "@/hooks/useAdminGuard";
+import { usePersistedState, useMounted } from "@/hooks/usePersistedState";
 import { listTransactions, softDeleteInvoice, type TxKind } from "@/features/transactions/api";
 import {
   getDailyRevenue, getRetentionByMonth, getAvgVisitsByMonth,
@@ -26,6 +27,7 @@ import {
 import { FinanceFormModal, type FinanceKind } from "@/features/finance/FinanceFormModal";
 import type { Invoice, Expense, Income } from "@/lib/types";
 import { dt, money } from "@/lib/format";
+import { startOfWeekSat } from "@/features/attendance/week";
 
 const METHODS = ["All", "Cash", "Card", "Mobile Wallet", "Instapay"];
 const KINDS: { value: TxKind; label: string }[] = [
@@ -47,14 +49,6 @@ const C = {
   muted:   "var(--muted)",
 };
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
-function monthsAgo(n: number) {
-  const d = new Date();
-  d.setMonth(d.getMonth() - n);
-  d.setDate(1);
-  return isoDate(d);
-}
-
 // Helpers for <input type="datetime-local">. Local-time string ↔ ISO.
 function toLocalDt(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -64,27 +58,56 @@ function localToIso(local: string) {
   if (!local) return undefined;
   return new Date(local).toISOString();
 }
+function localDate(d: Date) { return toLocalDt(d).slice(0, 10); }
+
+// Default filter range: the current day (local time).
+function todayStart() { const d = new Date(); d.setHours(0, 0, 0, 0); return toLocalDt(d); }
+function todayEnd() { const d = new Date(); d.setHours(23, 59, 0, 0); return toLocalDt(d); }
+
+const FILTER_KEY = "zad.analytics.";
+
+// Quick date-range presets. Every range ends at the end of today; "3 Months"
+// is the current month plus the two before it (week starts Saturday).
+type Preset = "day" | "week" | "month" | "3months" | "all";
+const PRESETS: { value: Preset; label: string }[] = [
+  { value: "day", label: "This Day" },
+  { value: "week", label: "This Week" },
+  { value: "month", label: "This Month" },
+  { value: "3months", label: "3 Months" },
+  { value: "all", label: "All Time" },
+];
+function presetRange(p: Preset): { from: string; to: string } {
+  if (p === "all") return { from: "", to: "" };
+  const now = new Date();
+  let start: Date;
+  if (p === "week") start = startOfWeekSat(now);
+  else if (p === "month") start = new Date(now.getFullYear(), now.getMonth(), 1);
+  else if (p === "3months") start = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  else start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return { from: toLocalDt(start), to: todayEnd() };
+}
 
 export default function TransactionsPage() {
   const { push } = useToast();
   const isAdmin = useAdminGuard();
-  const [tab, setTab] = useState<Tab>("transactions");
+  const mounted = useMounted();
+  const [tab, setTab] = usePersistedState<Tab>(FILTER_KEY + "tab", "transactions");
 
   // ── Transactions ───────────────────────────────────────────────────────────
   const [rows, setRows] = useState<Invoice[]>([]);
   const [invoiceDeleteTarget, setInvoiceDeleteTarget] = useState<Invoice | null>(null);
-  const [search, setSearch] = useState("");
-  const [from, setFrom] = useState("");   // local datetime string
-  const [to, setTo] = useState("");       // local datetime string
-  const [method, setMethod] = useState("All");
-  const [kind, setKind] = useState<TxKind>("all");
-  const [sortBy, setSortBy] = useState<SortBy>("issued_at");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [search, setSearch] = usePersistedState(FILTER_KEY + "search", "");
+  const [from, setFrom] = usePersistedState(FILTER_KEY + "from", todayStart);   // local datetime string
+  const [to, setTo] = usePersistedState(FILTER_KEY + "to", todayEnd);           // local datetime string
+  const [method, setMethod] = usePersistedState(FILTER_KEY + "method", "All");
+  const [kind, setKind] = usePersistedState<TxKind>(FILTER_KEY + "kind", "all");
+  const [sortBy, setSortBy] = usePersistedState<SortBy>(FILTER_KEY + "sortBy", "issued_at");
+  const [sortDir, setSortDir] = usePersistedState<"asc" | "desc">(FILTER_KEY + "sortDir", "desc");
   const [page, setPage] = useState(1);
 
   // ── Analytics ──────────────────────────────────────────────────────────────
-  const [analyticsFrom, setAnalyticsFrom] = useState(monthsAgo(5));
-  const [analyticsTo, setAnalyticsTo] = useState(isoDate(new Date()));
+  const [analyticsFrom, setAnalyticsFrom] = usePersistedState(FILTER_KEY + "analyticsFrom", () => localDate(new Date()));
+  const [analyticsTo, setAnalyticsTo] = usePersistedState(FILTER_KEY + "analyticsTo", () => localDate(new Date()));
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
   const [retention, setRetention] = useState<RetentionPoint[]>([]);
@@ -98,10 +121,10 @@ export default function TransactionsPage() {
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(null);
   const [financeLoading, setFinanceLoading] = useState(false);
-  const [financeFrom, setFinanceFrom] = useState("");
-  const [financeTo, setFinanceTo] = useState("");
-  const [financeMethod, setFinanceMethod] = useState("All");
-  const [financeSearch, setFinanceSearch] = useState("");
+  const [financeFrom, setFinanceFrom] = usePersistedState(FILTER_KEY + "financeFrom", todayStart);
+  const [financeTo, setFinanceTo] = usePersistedState(FILTER_KEY + "financeTo", todayEnd);
+  const [financeMethod, setFinanceMethod] = usePersistedState(FILTER_KEY + "financeMethod", "All");
+  const [financeSearch, setFinanceSearch] = usePersistedState(FILTER_KEY + "financeSearch", "");
   const [formOpen, setFormOpen] = useState<null | FinanceKind>(null);
   const [deleteTarget, setDeleteTarget] = useState<
     null | { kind: "expense"; row: Expense } | { kind: "income"; row: Income }
@@ -128,10 +151,10 @@ export default function TransactionsPage() {
   }, [from, to, method, kind, search, sortBy, sortDir, push]);
 
   useEffect(() => {
-    if (tab !== "transactions") return;
+    if (!mounted || tab !== "transactions") return;
     const t = setTimeout(refresh, 250);
     return () => clearTimeout(t);
-  }, [refresh, tab]);
+  }, [refresh, tab, mounted]);
 
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
@@ -160,9 +183,9 @@ export default function TransactionsPage() {
   }, [analyticsFrom, analyticsTo, push]);
 
   useEffect(() => {
-    if (tab !== "analytics") return;
+    if (!mounted || tab !== "analytics") return;
     loadAnalytics();
-  }, [tab, loadAnalytics]);
+  }, [tab, loadAnalytics, mounted]);
 
   const loadFinance = useCallback(async () => {
     setFinanceLoading(true);
@@ -189,10 +212,10 @@ export default function TransactionsPage() {
   }, [financeFrom, financeTo, financeMethod, financeSearch, push]);
 
   useEffect(() => {
-    if (tab !== "finance") return;
+    if (!mounted || tab !== "finance") return;
     const t = setTimeout(loadFinance, 200);
     return () => clearTimeout(t);
-  }, [tab, loadFinance]);
+  }, [tab, loadFinance, mounted]);
 
   const displayedRows = useMemo(() => {
     if (filtersActive) return rows;
@@ -204,13 +227,17 @@ export default function TransactionsPage() {
 
   const totals = useMemo(() => {
     const src = filtersActive ? rows : displayedRows;
-    return {
-      sum: src.reduce((s, r) => s + Number(r.total_amount), 0),
-      sessions: src.reduce((s, r) => s + Number(r.session_amount), 0),
-      orders: src.reduce((s, r) => s + Number(r.orders_amount), 0),
-      count: rows.length,
-    };
-  }, [rows, displayedRows, filtersActive]);
+    // Only count the part of each invoice that matches the selected kind,
+    // e.g. "Sessions" shows 0 for Orders even if session invoices include orders.
+    const sessions = kind === "all" || kind === "session"
+      ? src.reduce((s, r) => s + Number(r.session_amount), 0) : 0;
+    const orders = kind === "all" || kind === "orders"
+      ? src.reduce((s, r) => s + Number(r.orders_amount), 0) : 0;
+    const sum = kind === "session" ? sessions
+      : kind === "orders" ? orders
+      : src.reduce((s, r) => s + Number(r.total_amount), 0);
+    return { sum, sessions, orders, count: rows.length };
+  }, [rows, displayedRows, filtersActive, kind]);
 
   const financeTotals = useMemo(() => {
     const expSum = expenses.reduce((s, r) => s + Number(r.amount), 0);
@@ -266,62 +293,40 @@ export default function TransactionsPage() {
         {/* ── TRANSACTIONS ──────────────────────────────────────────────────── */}
         {tab === "transactions" && (
           <>
-            <div className="card p-4 space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex flex-1 min-w-[220px] items-center gap-2 rounded-xl border px-3 py-1.5"
-                  style={{ borderColor: "var(--border)" }}>
-                  <Search className="h-4 w-4" style={{ color: "var(--muted)" }} />
-                  <input className="input !border-0 !shadow-none !py-1"
-                    placeholder="Search customer / subscriber name…"
-                    value={search} onChange={(e) => setSearch(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">From (date &amp; time)</label>
-                  <input type="datetime-local" className="input mt-1" value={from} onChange={(e) => setFrom(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">To (date &amp; time)</label>
-                  <input type="datetime-local" className="input mt-1" value={to} onChange={(e) => setTo(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">Payment</label>
-                  <select className="input mt-1" value={method} onChange={(e) => setMethod(e.target.value)}>
+            <div className="card p-4 space-y-4">
+              <FilterFields>
+                <Field label="Search" className="sm:col-span-2 xl:col-span-1">
+                  <SearchInput placeholder="Search customer / subscriber name…" value={search} onChange={setSearch} />
+                </Field>
+                <Field label="From (date & time)">
+                  <input type="datetime-local" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
+                </Field>
+                <Field label="To (date & time)">
+                  <input type="datetime-local" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
+                </Field>
+                <Field label="Payment" className="sm:col-span-2 xl:col-span-1">
+                  <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
                     {METHODS.map((m) => <option key={m}>{m}</option>)}
                   </select>
-                </div>
-                {(from || to) && (
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => { setFrom(""); setTo(""); }}
-                    title="Clear date filter"
-                  >
-                    Clear range
-                  </button>
-                )}
+                </Field>
+              </FilterFields>
+              <div className="flex flex-wrap items-end justify-between gap-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+                <Field label="Period">
+                  <PresetBar from={from} to={to} onPick={(r) => { setFrom(r.from); setTo(r.to); }} />
+                </Field>
+                <Field label="Type">
+                  <Segmented options={KINDS} value={kind} onChange={setKind} />
+                </Field>
               </div>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="inline-flex rounded-xl border p-1" style={{ borderColor: "var(--border)" }}>
-                  {KINDS.map((k) => {
-                    const active = kind === k.value;
-                    return (
-                      <button key={k.value} onClick={() => setKind(k.value)}
-                        className="rounded-lg px-3 py-1.5 text-sm transition"
-                        style={active ? { background: "var(--brand)", color: "#fff" } : { color: "var(--text)" }}>
-                        {k.label}
-                      </button>
-                    );
-                  })}
+              {filtersActive && (
+                <div className="text-xs" style={{ color: "var(--muted)" }}>
+                  Filters active — <span className="font-semibold" style={{ color: "var(--brand)" }}>{rows.length} results</span>
                 </div>
-                {filtersActive && (
-                  <span className="badge" style={{ background: "var(--brand)", color: "#fff" }}>
-                    Filters active — {rows.length} results
-                  </span>
-                )}
-              </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Stat label="Transactions" value={String(totals.count)} />
+              <Stat label="Invoices" value={String(totals.count)} />
               <Stat label="Sessions" value={money(totals.sessions)} />
               <Stat label="Orders" value={money(totals.orders)} />
               <Stat label="Total" value={money(totals.sum)} accent />
@@ -423,21 +428,26 @@ export default function TransactionsPage() {
         {/* ── ANALYTICS ─────────────────────────────────────────────────────── */}
         {tab === "analytics" && (
           <>
-            <div className="card p-4">
-              <div className="flex flex-wrap items-end gap-3">
-                <div>
-                  <label className="label">From</label>
-                  <input type="date" className="input mt-1" value={analyticsFrom}
+            <div className="card p-4 space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                <Field label="From">
+                  <input type="date" className="input" value={analyticsFrom}
                     onChange={(e) => setAnalyticsFrom(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">To</label>
-                  <input type="date" className="input mt-1" value={analyticsTo}
+                </Field>
+                <Field label="To">
+                  <input type="date" className="input" value={analyticsTo}
                     onChange={(e) => setAnalyticsTo(e.target.value)} />
-                </div>
+                </Field>
                 <button className="btn btn-primary" onClick={loadAnalytics}>
                   <RefreshCw className="h-3.5 w-3.5" /> Refresh
                 </button>
+              </div>
+              <div className="border-t pt-4" style={{ borderColor: "var(--border)" }}>
+                <Field label="Period">
+                  <PresetBar dateOnly from={analyticsFrom} to={analyticsTo}
+                    presets={PRESETS.filter((p) => p.value !== "all")}
+                    onPick={(r) => { setAnalyticsFrom(r.from.slice(0, 10)); setAnalyticsTo(r.to.slice(0, 10)); }} />
+                </Field>
               </div>
             </div>
 
@@ -622,45 +632,44 @@ export default function TransactionsPage() {
         {tab === "finance" && (
           <>
             {/* Action bar */}
-            <div className="card p-4 space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex flex-1 min-w-[220px] items-center gap-2 rounded-xl border px-3 py-1.5"
-                  style={{ borderColor: "var(--border)" }}>
-                  <Search className="h-4 w-4" style={{ color: "var(--muted)" }} />
-                  <input className="input !border-0 !shadow-none !py-1"
-                    placeholder="Search expense / income name…"
-                    value={financeSearch} onChange={(e) => setFinanceSearch(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">From (date &amp; time)</label>
-                  <input type="datetime-local" className="input mt-1" value={financeFrom}
+            <div className="card p-4 space-y-4">
+              <FilterFields>
+                <Field label="Search" className="sm:col-span-2 xl:col-span-1">
+                  <SearchInput placeholder="Search expense / income name…" value={financeSearch} onChange={setFinanceSearch} />
+                </Field>
+                <Field label="From (date & time)">
+                  <input type="datetime-local" className="input" value={financeFrom}
                     onChange={(e) => setFinanceFrom(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">To (date &amp; time)</label>
-                  <input type="datetime-local" className="input mt-1" value={financeTo}
+                </Field>
+                <Field label="To (date & time)">
+                  <input type="datetime-local" className="input" value={financeTo}
                     onChange={(e) => setFinanceTo(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">Payment</label>
-                  <select className="input mt-1" value={financeMethod} onChange={(e) => setFinanceMethod(e.target.value)}>
+                </Field>
+                <Field label="Payment" className="sm:col-span-2 xl:col-span-1">
+                  <select className="input" value={financeMethod} onChange={(e) => setFinanceMethod(e.target.value)}>
                     {METHODS.map((m) => <option key={m}>{m}</option>)}
                   </select>
+                </Field>
+              </FilterFields>
+              <div className="flex flex-wrap items-end justify-between gap-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+                <Field label="Period">
+                  <PresetBar from={financeFrom} to={financeTo}
+                    onPick={(r) => { setFinanceFrom(r.from); setFinanceTo(r.to); }} />
+                </Field>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button className="btn btn-primary" onClick={() => setFormOpen("expense")}>
+                    <Plus className="h-3.5 w-3.5" /> Add Expense
+                  </button>
+                  <button className="btn btn-primary" onClick={() => setFormOpen("income")}>
+                    <Plus className="h-3.5 w-3.5" /> Add Income
+                  </button>
+                  <button className="btn btn-ghost" onClick={loadFinance}>
+                    <RefreshCw className="h-3.5 w-3.5" /> Refresh
+                  </button>
+                  <Link href="/delete-log" className="btn btn-ghost">
+                    <Trash2 className="h-3.5 w-3.5" /> Delete Log
+                  </Link>
                 </div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button className="btn btn-primary" onClick={() => setFormOpen("expense")}>
-                  <Plus className="h-3.5 w-3.5" /> Add Expense
-                </button>
-                <button className="btn btn-primary" onClick={() => setFormOpen("income")}>
-                  <Plus className="h-3.5 w-3.5" /> Add Income
-                </button>
-                <button className="btn btn-ghost" onClick={loadFinance}>
-                  <RefreshCw className="h-3.5 w-3.5" /> Refresh
-                </button>
-                <Link href="/delete-log" className="btn btn-ghost">
-                  <Trash2 className="h-3.5 w-3.5" /> Delete Log
-                </Link>
               </div>
             </div>
 
@@ -780,6 +789,66 @@ export default function TransactionsPage() {
 }
 
 // ─── Shared tiny helpers ──────────────────────────────────────────────────────
+
+// Filter row: every field has a label on top, so inputs line up on one baseline.
+function FilterFields({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_210px_210px_160px]">
+      {children}
+    </div>
+  );
+}
+
+function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
+  return (
+    <div className={`flex min-w-0 flex-col gap-1 ${className ?? ""}`}>
+      <span className="label">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <div className="relative">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--muted)" }} />
+      <input className="input pl-9" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+function Segmented<T extends string>({ options, value, onChange }: {
+  options: { value: T; label: string }[]; value: T | null; onChange: (v: T) => void;
+}) {
+  return (
+    <div className="inline-flex max-w-full flex-wrap gap-1 rounded-xl border p-1" style={{ borderColor: "var(--border)" }}>
+      {options.map((o) => {
+        const active = value === o.value;
+        return (
+          <button key={o.value} type="button" onClick={() => onChange(o.value)}
+            className="whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition"
+            style={active ? { background: "var(--brand)", color: "#fff" } : { color: "var(--text)" }}>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Highlights the preset matching the current range; picking one sets from/to.
+// `dateOnly` compares YYYY-MM-DD values (for <input type="date">).
+function PresetBar({ from, to, onPick, dateOnly, presets = PRESETS }: {
+  from: string; to: string; onPick: (r: { from: string; to: string }) => void;
+  dateOnly?: boolean; presets?: { value: Preset; label: string }[];
+}) {
+  const norm = (v: string) => (dateOnly ? v.slice(0, 10) : v);
+  const active = presets.find((p) => {
+    const r = presetRange(p.value);
+    return norm(r.from) === from && norm(r.to) === to;
+  })?.value ?? null;
+  return <Segmented options={presets} value={active} onChange={(p) => onPick(presetRange(p))} />;
+}
 
 function TabBtn({ label, icon, active, onClick }: { label: string; icon: React.ReactNode; active: boolean; onClick: () => void }) {
   return (
