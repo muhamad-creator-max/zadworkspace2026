@@ -59,8 +59,8 @@ export function TrendChart<K extends string>({
   const toggle = (key: K, on: boolean) =>
     setHidden((h) => (on ? h.filter((k) => k !== key) : [...h, key]));
 
-  // Dense ranges (e.g. 90 days) get smaller dots so the line stays readable.
-  const dotR = rows.length > 45 ? 2 : 3;
+  // Dense ranges (months of daily points) get smaller dots so the line stays readable.
+  const dotR = rows.length > 120 ? 1.5 : rows.length > 45 ? 2 : 3;
 
   return (
     <Card>

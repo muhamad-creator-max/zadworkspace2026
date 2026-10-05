@@ -1,5 +1,5 @@
 // Time buckets for trend charts, in local time. The granularity follows the
-// range: one day → hours, up to ~3 months → days, anything longer → months.
+// range: one day → hours, up to a year → days, anything longer → months.
 // Every bucket in the range is emitted (zeros included) so lines stay continuous.
 
 export type Granularity = "hour" | "day" | "month";
@@ -16,7 +16,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export function pickGranularity(from: Date, to: Date): Granularity {
   const days = (to.getTime() - from.getTime()) / DAY_MS;
   if (days <= 1) return "hour";
-  if (days <= 93) return "day";
+  if (days <= 366) return "day";
   return "month";
 }
 
