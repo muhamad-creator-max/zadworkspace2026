@@ -6,6 +6,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // shadcn/ui tokens, mapped onto the app's existing CSS variables.
+        background: "var(--bg)",
+        foreground: "var(--text)",
+        card: { DEFAULT: "var(--surface)", foreground: "var(--text)" },
+        popover: { DEFAULT: "var(--surface)", foreground: "var(--text)" },
+        primary: { DEFAULT: "var(--brand)", foreground: "#FFFFFF" },
+        muted: { DEFAULT: "var(--bg)", foreground: "var(--muted)" },
+        border: "var(--border)",
+        input: "var(--border)",
+        ring: "var(--brand)",
         brand: {
           DEFAULT: "#354A37",
           green: "#354A37",

@@ -236,3 +236,52 @@ export async function getFinanceSummary(): Promise<FinanceSummary> {
     netProfit: totalSystemIncome - totalSystemExpenses,
   };
 }
+
+// ── INCOME vs EXPENSES OVER TIME ─────────────────────────────────────────────
+// Timestamped amounts for the trend chart. Income matches the summary cards:
+// invoices (sales) plus manual incomes.
+
+export interface FinanceEntry {
+  at: string;   // ISO
+  income: number;
+  expenses: number;
+}
+
+const PAGE = 1000; // Supabase caps a single select at 1000 rows
+
+async function selectAll<T>(
+  table: "invoices" | "incomes" | "expenses",
+  columns: string,
+  dateCol: string,
+  from: string,
+  to: string,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await sb()
+      .from(table)
+      .select(columns)
+      .is("deleted_at", null)
+      .gte(dateCol, from)
+      .lte(dateCol, to)
+      .order(dateCol, { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw error;
+    out.push(...((data ?? []) as T[]));
+    if ((data?.length ?? 0) < PAGE) return out;
+  }
+}
+
+export async function getFinanceEntries(from: string, to: string): Promise<FinanceEntry[]> {
+  type Row = { at: string; amount: number };
+  const [inv, inc, exp] = await Promise.all([
+    selectAll<Row>("invoices", "at:issued_at, amount:total_amount", "issued_at", from, to),
+    selectAll<Row>("incomes", "at:payment_due, amount", "payment_due", from, to),
+    selectAll<Row>("expenses", "at:payment_due, amount", "payment_due", from, to),
+  ]);
+  return [
+    ...inv.map((r) => ({ at: r.at, income: Number(r.amount), expenses: 0 })),
+    ...inc.map((r) => ({ at: r.at, income: Number(r.amount), expenses: 0 })),
+    ...exp.map((r) => ({ at: r.at, income: 0, expenses: Number(r.amount) })),
+  ];
+}

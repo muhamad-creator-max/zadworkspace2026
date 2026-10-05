@@ -3,12 +3,11 @@ import { createClient } from "@/lib/supabase/client";
 
 const sb = () => createClient();
 
-export interface DailyRevenue {
-  date: string;       // YYYY-MM-DD
+export interface RevenueEntry {
+  at: string;         // invoice issued_at (ISO)
   sessions: number;
   orders: number;
   subscriptions: number;
-  total: number;
 }
 
 export interface RetentionPoint {
@@ -48,28 +47,32 @@ export interface AnalyticsSummary {
 }
 
 // ── Revenue over time ─────────────────────────────────────────────────────────
-export async function getDailyRevenue(from: string, to: string): Promise<DailyRevenue[]> {
-  const { data, error } = await sb()
-    .from("invoices")
-    .select("issued_at, kind, session_amount, orders_amount, total_amount")
-    .is("deleted_at", null)
-    .gte("issued_at", from)
-    .lte("issued_at", to)
-    .order("issued_at", { ascending: true });
-  if (error) throw error;
+// One entry per invoice; the page buckets them by hour / day / month.
+const PAGE = 1000; // Supabase caps a single select at 1000 rows
 
-  const map = new Map<string, DailyRevenue>();
-  for (const row of data ?? []) {
-    const date = row.issued_at.slice(0, 10);
-    if (!map.has(date))
-      map.set(date, { date, sessions: 0, orders: 0, subscriptions: 0, total: 0 });
-    const b = map.get(date)!;
-    b.sessions += Number(row.session_amount);
-    b.orders += Number(row.orders_amount);
-    if (row.kind === "subscription") b.subscriptions += Number(row.total_amount);
-    b.total += Number(row.total_amount);
+export async function getRevenueEntries(from: string, to: string): Promise<RevenueEntry[]> {
+  const out: RevenueEntry[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await sb()
+      .from("invoices")
+      .select("issued_at, kind, session_amount, orders_amount, total_amount")
+      .is("deleted_at", null)
+      .gte("issued_at", from)
+      .lte("issued_at", to)
+      .order("issued_at", { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const isSub = row.kind === "subscription";
+      out.push({
+        at: row.issued_at,
+        sessions: isSub ? 0 : Number(row.session_amount),
+        orders: isSub ? 0 : Number(row.orders_amount),
+        subscriptions: isSub ? Number(row.total_amount) : 0,
+      });
+    }
+    if ((data?.length ?? 0) < PAGE) return out;
   }
-  return Array.from(map.values());
 }
 
 // ── Retention rate per month ──────────────────────────────────────────────────

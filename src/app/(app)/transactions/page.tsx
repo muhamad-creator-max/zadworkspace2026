@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import Link from "next/link";
 import {
   Search, ArrowUpDown, ExternalLink, ChevronLeft, ChevronRight,
@@ -14,20 +15,24 @@ import { useAdminGuard } from "@/hooks/useAdminGuard";
 import { usePersistedState, useMounted } from "@/hooks/usePersistedState";
 import { listTransactions, softDeleteInvoice, type TxKind } from "@/features/transactions/api";
 import {
-  getDailyRevenue, getRetentionByMonth, getAvgVisitsByMonth,
+  getRevenueEntries, getRetentionByMonth, getAvgVisitsByMonth,
   getActiveMembersByMonth, getAnalyticsSummary, getTopCustomers,
-  type DailyRevenue, type RetentionPoint, type AvgVisitsPoint,
+  type RevenueEntry, type RetentionPoint, type AvgVisitsPoint,
   type ActiveMembersPoint, type TopCustomer, type AnalyticsSummary,
 } from "@/features/transactions/analytics";
 import {
   listExpenses, listIncomes, createExpense, createIncome,
-  softDeleteExpense, softDeleteIncome, getFinanceSummary,
-  type FinanceSummary,
+  softDeleteExpense, softDeleteIncome, getFinanceSummary, getFinanceEntries,
+  type FinanceSummary, type FinanceEntry,
 } from "@/features/finance/api";
 import { FinanceFormModal, type FinanceKind } from "@/features/finance/FinanceFormModal";
 import type { Invoice, Expense, Income } from "@/lib/types";
 import { dt, money } from "@/lib/format";
 import { startOfWeekSat } from "@/features/attendance/week";
+import { TrendChart, type TrendSeries } from "@/components/charts/TrendChart";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { bucketize } from "@/lib/timeBuckets";
 
 const METHODS = ["All", "Cash", "Card", "Mobile Wallet", "Instapay"];
 const KINDS: { value: TxKind; label: string }[] = [
@@ -40,25 +45,40 @@ type SortBy = "issued_at" | "total_amount" | "customer_name";
 type Tab = "transactions" | "analytics" | "finance";
 const PAGE_SIZE = 100;
 
-const C = {
-  brand:   "var(--brand)",
-  chart1:  "var(--chart-1)",
-  chart2:  "var(--chart-2)",
-  chart3:  "var(--chart-3)",
-  border:  "var(--border)",
-  muted:   "var(--muted)",
-};
+const REVENUE_SERIES = [
+  { key: "sessions", label: "Sessions", color: "var(--chart-1)" },
+  { key: "orders", label: "Orders", color: "var(--chart-2)" },
+  { key: "subscriptions", label: "Subscriptions", color: "var(--chart-3)" },
+] as const satisfies readonly TrendSeries<string>[];
+const REVENUE_KEYS = REVENUE_SERIES.map((s) => s.key);
+
+const FINANCE_SERIES = [
+  { key: "income", label: "Income", color: "var(--chart-1)" },
+  { key: "expenses", label: "Expenses", color: "var(--chart-4)" },
+  { key: "net", label: "Net", color: "var(--chart-3)" },
+] as const satisfies readonly TrendSeries<string>[];
 
 // Helpers for <input type="datetime-local">. Local-time string ↔ ISO.
 function toLocalDt(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+// Finance filters are datetime-local strings and may be cleared; the chart
+// falls back to the last 30 days ending now.
+function financeRange(from: string, to: string) {
+  const end = to ? new Date(to) : new Date();
+  const start = from ? new Date(from) : new Date(end.getTime() - 30 * 86400000);
+  if (to) end.setSeconds(59, 999);
+  return { from: start, to: end };
+}
 function localToIso(local: string) {
   if (!local) return undefined;
   return new Date(local).toISOString();
 }
 function localDate(d: Date) { return toLocalDt(d).slice(0, 10); }
+// YYYY-MM-DD → start / end of that day in local time.
+function dayStart(date: string) { return new Date(`${date}T00:00:00`); }
+function dayEnd(date: string) { return new Date(`${date}T23:59:59.999`); }
 
 // Default filter range: the current day (local time).
 function todayStart() { const d = new Date(); d.setHours(0, 0, 0, 0); return toLocalDt(d); }
@@ -109,7 +129,7 @@ export default function TransactionsPage() {
   const [analyticsFrom, setAnalyticsFrom] = usePersistedState(FILTER_KEY + "analyticsFrom", () => localDate(new Date()));
   const [analyticsTo, setAnalyticsTo] = usePersistedState(FILTER_KEY + "analyticsTo", () => localDate(new Date()));
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
-  const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
+  const [revenueEntries, setRevenueEntries] = useState<RevenueEntry[]>([]);
   const [retention, setRetention] = useState<RetentionPoint[]>([]);
   const [avgVisits, setAvgVisits] = useState<AvgVisitsPoint[]>([]);
   const [activeMembers, setActiveMembers] = useState<ActiveMembersPoint[]>([]);
@@ -120,6 +140,7 @@ export default function TransactionsPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(null);
+  const [financeEntries, setFinanceEntries] = useState<FinanceEntry[]>([]);
   const [financeLoading, setFinanceLoading] = useState(false);
   const [financeFrom, setFinanceFrom] = usePersistedState(FILTER_KEY + "financeFrom", todayStart);
   const [financeTo, setFinanceTo] = usePersistedState(FILTER_KEY + "financeTo", todayEnd);
@@ -159,18 +180,18 @@ export default function TransactionsPage() {
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
     try {
-      const fromIso = new Date(analyticsFrom).toISOString();
-      const toIso = new Date(new Date(analyticsTo).getTime() + 86400000 - 1).toISOString();
+      const fromIso = dayStart(analyticsFrom).toISOString();
+      const toIso = dayEnd(analyticsTo).toISOString();
       const [sum, rev, ret, avg, active, top] = await Promise.all([
         getAnalyticsSummary(),
-        getDailyRevenue(fromIso, toIso),
+        getRevenueEntries(fromIso, toIso),
         getRetentionByMonth(fromIso, toIso),
         getAvgVisitsByMonth(fromIso, toIso),
         getActiveMembersByMonth(fromIso, toIso),
         getTopCustomers(10),
       ]);
       setSummary(sum);
-      setDailyRevenue(rev);
+      setRevenueEntries(rev);
       setRetention(ret);
       setAvgVisits(avg);
       setActiveMembers(active);
@@ -196,14 +217,17 @@ export default function TransactionsPage() {
         paymentMethod: financeMethod,
         search: financeSearch,
       };
-      const [exp, inc, sum] = await Promise.all([
+      const range = financeRange(financeFrom, financeTo);
+      const [exp, inc, sum, series] = await Promise.all([
         listExpenses(filters),
         listIncomes(filters),
         getFinanceSummary(),
+        getFinanceEntries(range.from.toISOString(), range.to.toISOString()),
       ]);
       setExpenses(exp);
       setIncomes(inc);
       setFinanceSummary(sum);
+      setFinanceEntries(series);
     } catch (e: any) {
       push({ kind: "err", msg: e.message });
     } finally {
@@ -238,6 +262,26 @@ export default function TransactionsPage() {
       : src.reduce((s, r) => s + Number(r.total_amount), 0);
     return { sum, sessions, orders, count: rows.length };
   }, [rows, displayedRows, filtersActive, kind]);
+
+  const revenueChart = useMemo(
+    () => bucketize(dayStart(analyticsFrom), dayEnd(analyticsTo), REVENUE_KEYS,
+      revenueEntries.map(({ at, ...values }) => ({ at, values }))),
+    [revenueEntries, analyticsFrom, analyticsTo],
+  );
+
+  const financeChart = useMemo(() => {
+    const range = financeRange(financeFrom, financeTo);
+    const b = bucketize(range.from, range.to, ["income", "expenses"] as const,
+      financeEntries.map(({ at, ...values }) => ({ at, values })));
+    const income = financeEntries.reduce((sum, e) => sum + e.income, 0);
+    const expenses = financeEntries.reduce((sum, e) => sum + e.expenses, 0);
+    return {
+      ...b,
+      range,
+      totals: { income, expenses, net: income - expenses },
+      rows: b.rows.map((r) => ({ ...r, net: r.income - r.expenses })),
+    };
+  }, [financeEntries, financeFrom, financeTo]);
 
   const financeTotals = useMemo(() => {
     const expSum = expenses.reduce((s, r) => s + Number(r.amount), 0);
@@ -451,15 +495,15 @@ export default function TransactionsPage() {
               </div>
             </div>
 
-            {analyticsLoading && (
+            {analyticsLoading && !summary && (
               <div className="card p-10 text-center text-sm" style={{ color: "var(--muted)" }}>
                 Loading analytics…
               </div>
             )}
 
-            {summary && !analyticsLoading && (
+            {summary && (
               <>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                   <KpiCard label="Customers" value={String(summary.totalCustomers)} icon={<Users className="h-4 w-4" />} />
                   <KpiCard label="Subscribers" value={String(summary.totalSubscribers)} icon={<Users className="h-4 w-4" />} />
                   <KpiCard label="Active Now" value={String(summary.activeSubscribersNow)} icon={<Activity className="h-4 w-4" />} accent />
@@ -468,153 +512,100 @@ export default function TransactionsPage() {
                   <KpiCard label="Total Sessions" value={String(summary.totalSessions)} icon={<BarChart2 className="h-4 w-4" />} />
                 </div>
 
-                {dailyRevenue.length > 0 && (
-                  <div className="card p-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <p className="font-semibold text-sm">Revenue Over Time</p>
-                        <p className="label mt-0.5">Sessions · Orders · Subscriptions</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Legend color={C.chart1} label="Sessions" />
-                        <Legend color={C.chart2} label="Orders" />
-                        <Legend color={C.chart3} label="Subscriptions" />
-                      </div>
-                    </div>
-                    <StackedBarChart
-                      data={dailyRevenue.map((d) => ({
-                        label: d.date.slice(5),
-                        stacks: [d.sessions, d.orders, d.subscriptions],
-                      }))}
-                      colors={[C.chart1, C.chart2, C.chart3]}
-                      formatTip={(v) => money(v)}
-                      height={120}
-                    />
-                  </div>
-                )}
+                <TrendChart
+                  title="Revenue"
+                  description={`Sessions, orders and subscriptions · ${rangeLabel(dayStart(analyticsFrom), dayEnd(analyticsTo))}`}
+                  series={REVENUE_SERIES}
+                  rows={revenueChart.rows}
+                  granularity={revenueChart.granularity}
+                  formatValue={money}
+                  storageKey={FILTER_KEY + "revenueSeries"}
+                  showTotal
+                  loading={analyticsLoading}
+                />
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {retention.length > 0 && (
-                    <div className="card p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <p className="font-semibold text-sm">Retention Rate</p>
-                          <p className="label mt-0.5">% of visitors who came back</p>
-                        </div>
-                        <span className="badge text-xs font-semibold" style={{ background: "var(--brand)", color: "#fff" }}>
-                          {retention.at(-1)?.retentionRate ?? 0}% latest
-                        </span>
-                      </div>
-                      <LineSparkline
-                        data={retention.map((r) => ({ label: r.month.slice(5), value: r.retentionRate }))}
-                        color={C.brand}
+                    <MetricCard
+                      title="Retention Rate"
+                      description="% of visitors who came back"
+                      badge={`${retention.at(-1)?.retentionRate ?? 0}% latest`}
+                    >
+                      <MiniLineChart
+                        data={retention.map((r) => ({ label: monthLabel(r.month), value: r.retentionRate }))}
+                        label="Retention"
+                        color="var(--chart-1)"
                         yMax={100}
-                        height={80}
-                        formatTip={(v) => `${v}%`}
+                        format={(v) => `${v}%`}
                       />
-                      <div className="mt-3 divide-y" style={{ borderColor: "var(--border)" }}>
-                        {retention.map((r) => (
-                          <div key={r.month} className="flex items-center justify-between py-1.5 text-xs">
-                            <span style={{ color: "var(--muted)" }}>{r.month}</span>
-                            <div className="flex gap-3">
-                              <span style={{ color: "var(--muted)" }}>New <b style={{ color: "var(--text)" }}>{r.new}</b></span>
-                              <span style={{ color: "var(--muted)" }}>Return <b style={{ color: "var(--text)" }}>{r.returning}</b></span>
-                              <span className="font-semibold" style={{ color: "var(--brand)" }}>{r.retentionRate}%</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                      <MonthRows rows={retention.map((r) => ({
+                        month: r.month,
+                        cells: [["New", r.new], ["Return", r.returning]],
+                        value: `${r.retentionRate}%`,
+                      }))} />
+                    </MetricCard>
                   )}
 
                   {avgVisits.length > 0 && (
-                    <div className="card p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <p className="font-semibold text-sm">Avg Visits / Customer</p>
-                          <p className="label mt-0.5">Sessions ÷ unique visitors</p>
-                        </div>
-                        <span className="badge text-xs font-semibold" style={{ background: "var(--border)", color: "var(--text)" }}>
-                          {avgVisits.at(-1)?.avgVisits ?? 0}× latest
-                        </span>
-                      </div>
-                      <LineSparkline
-                        data={avgVisits.map((r) => ({ label: r.month.slice(5), value: r.avgVisits }))}
-                        color={C.chart2}
-                        height={80}
-                        formatTip={(v) => `${v}×`}
+                    <MetricCard
+                      title="Avg Visits / Customer"
+                      description="Sessions ÷ unique visitors"
+                      badge={`${avgVisits.at(-1)?.avgVisits ?? 0}× latest`}
+                    >
+                      <MiniLineChart
+                        data={avgVisits.map((r) => ({ label: monthLabel(r.month), value: r.avgVisits }))}
+                        label="Avg visits"
+                        color="var(--chart-2)"
+                        format={(v) => `${v}×`}
                       />
-                      <div className="mt-3 divide-y" style={{ borderColor: "var(--border)" }}>
-                        {avgVisits.map((r) => (
-                          <div key={r.month} className="flex items-center justify-between py-1.5 text-xs">
-                            <span style={{ color: "var(--muted)" }}>{r.month}</span>
-                            <div className="flex gap-3">
-                              <span style={{ color: "var(--muted)" }}>Unique <b style={{ color: "var(--text)" }}>{r.uniqueCustomers}</b></span>
-                              <span style={{ color: "var(--muted)" }}>Sessions <b style={{ color: "var(--text)" }}>{r.totalVisits}</b></span>
-                              <span className="font-semibold" style={{ color: C.chart2 }}>{r.avgVisits}×</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                      <MonthRows rows={avgVisits.map((r) => ({
+                        month: r.month,
+                        cells: [["Unique", r.uniqueCustomers], ["Sessions", r.totalVisits]],
+                        value: `${r.avgVisits}×`,
+                      }))} />
+                    </MetricCard>
                   )}
 
                   {activeMembers.length > 0 && (
-                    <div className="card p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <p className="font-semibold text-sm">Active Members</p>
-                          <p className="label mt-0.5">Subscribers with a session that month</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Legend color={C.brand} label="Active" />
-                          <Legend color={C.border} label="Inactive" />
-                        </div>
-                      </div>
-                      <ActiveMembersChart data={activeMembers} height={80} />
-                      <div className="mt-3 divide-y" style={{ borderColor: "var(--border)" }}>
-                        {activeMembers.map((r) => (
-                          <div key={r.month} className="flex items-center justify-between py-1.5 text-xs">
-                            <span style={{ color: "var(--muted)" }}>{r.month}</span>
-                            <div className="flex gap-3">
-                              <span style={{ color: "var(--muted)" }}>Total <b style={{ color: "var(--text)" }}>{r.totalSubscribers}</b></span>
-                              <span style={{ color: "var(--muted)" }}>Active <b style={{ color: "var(--text)" }}>{r.activeSubscribers}</b></span>
-                              <span className="font-semibold" style={{ color: "var(--brand)" }}>{r.activeRate}%</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <MetricCard
+                      title="Active Members"
+                      description="Subscribers with a session that month"
+                      badge={`${activeMembers.at(-1)?.activeRate ?? 0}% latest`}
+                    >
+                      <ActiveMembersChart data={activeMembers} />
+                      <MonthRows rows={activeMembers.map((r) => ({
+                        month: r.month,
+                        cells: [["Total", r.totalSubscribers], ["Active", r.activeSubscribers]],
+                        value: `${r.activeRate}%`,
+                      }))} />
+                    </MetricCard>
                   )}
 
                   {topCustomers.length > 0 && (
-                    <div className="card p-4">
-                      <p className="font-semibold text-sm mb-3">Top Customers</p>
+                    <MetricCard title="Top Customers" description="By number of invoices, all time">
                       <div className="space-y-3">
                         {topCustomers.map((c, i) => {
                           const pct = Math.round((c.visits / topCustomers[0].visits) * 100);
                           return (
                             <div key={c.name}>
-                              <div className="flex items-center justify-between mb-1">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span className="text-xs font-mono w-5 text-right shrink-0" style={{ color: "var(--muted)" }}>
-                                    {i + 1}
-                                  </span>
-                                  <span className="text-sm font-medium truncate">{c.name}</span>
+                              <div className="mb-1 flex items-center justify-between">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span className="w-5 shrink-0 text-right font-mono text-xs text-muted-foreground">{i + 1}</span>
+                                  <span className="truncate text-sm font-medium">{c.name}</span>
                                 </div>
-                                <div className="flex items-center gap-3 shrink-0 ml-2">
-                                  <span className="text-xs" style={{ color: "var(--muted)" }}>{c.visits}×</span>
-                                  <span className="text-xs font-medium">{money(c.totalSpend)}</span>
+                                <div className="ml-2 flex shrink-0 items-center gap-3">
+                                  <span className="text-xs text-muted-foreground">{c.visits}×</span>
+                                  <span className="text-xs font-medium tabular-nums">{money(c.totalSpend)}</span>
                                 </div>
                               </div>
-                              <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
-                                <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "var(--brand)", transition: "width 0.4s ease" }} />
+                              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                                <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "var(--chart-1)", transition: "width 0.4s ease" }} />
                               </div>
                             </div>
                           );
                         })}
                       </div>
-                    </div>
+                    </MetricCard>
                   )}
                 </div>
 
@@ -691,24 +682,27 @@ export default function TransactionsPage() {
                   accentColor={financeSummary.monthNet >= 0 ? "var(--brand)" : "#c2410c"}
                 />
                 <SummaryCard
-                  label="Net Profit (System-wide)"
-                  value={money(financeSummary.netProfit)}
-                  sublabel={`Total income ${money(financeSummary.totalSystemIncome)} · Total expenses ${money(financeSummary.totalSystemExpenses)}`}
+                  label={`Net Profit (${rangeLabel(financeChart.range.from, financeChart.range.to)})`}
+                  value={money(financeChart.totals.net)}
+                  sublabel={`Income ${money(financeChart.totals.income)} · Expenses ${money(financeChart.totals.expenses)}`}
                   icon={<Wallet className="h-4 w-4" />}
-                  accentColor={financeSummary.netProfit >= 0 ? "var(--brand)" : "#c2410c"}
+                  accentColor={financeChart.totals.net >= 0 ? "var(--brand)" : "#c2410c"}
                 />
               </div>
             )}
 
-            {/* Income vs Expenses bar */}
+            {/* Income vs Expenses over the filtered period */}
             {financeSummary && (
-              <div className="card p-4">
-                <p className="font-semibold text-sm mb-3">Income vs Expenses — This Month</p>
-                <BarCompare
-                  income={financeSummary.monthIncome}
-                  expenses={financeSummary.monthExpenses}
-                />
-              </div>
+              <TrendChart
+                title="Income vs Expenses"
+                description={`Sales + other income against expenses · ${rangeLabel(financeChart.range.from, financeChart.range.to)}`}
+                series={FINANCE_SERIES}
+                rows={financeChart.rows}
+                granularity={financeChart.granularity}
+                formatValue={money}
+                storageKey={FILTER_KEY + "financeSeries"}
+                loading={financeLoading}
+              />
             )}
 
             {financeLoading && (
@@ -871,13 +865,20 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 
 function KpiCard({ label, value, icon, accent }: { label: string; value: string; icon: React.ReactNode; accent?: boolean }) {
   return (
-    <div className="card p-3">
-      <div className="flex items-center justify-between mb-1">
-        <span className="label">{label}</span>
-        <span style={{ color: accent ? "var(--brand)" : "var(--muted)" }}>{icon}</span>
-      </div>
-      <div className="text-xl font-bold" style={accent ? { color: "var(--brand)" } : undefined}>{value}</div>
-    </div>
+    <Card className="gap-3 py-4">
+      <CardHeader className="flex-row items-center gap-2 px-4">
+        <CardDescription className="font-medium">{label}</CardDescription>
+        <CardAction>
+          <span className="flex size-7 items-center justify-center rounded-lg bg-muted"
+            style={{ color: accent ? "var(--chart-1)" : "var(--muted)" }}>
+            {icon}
+          </span>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="px-4">
+        <div className="text-2xl font-semibold tabular-nums tracking-tight">{value}</div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -887,15 +888,6 @@ function SortBtn({ label, active, dir, onClick }: { label: string; active: boole
       {label} <ArrowUpDown className="h-3 w-3" style={{ opacity: active ? 1 : 0.4 }} />
       {active && <span className="text-[10px]">{dir}</span>}
     </button>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: color }} />
-      <span className="text-xs" style={{ color: "var(--muted)" }}>{label}</span>
-    </div>
   );
 }
 
@@ -914,40 +906,6 @@ function SummaryCard({
       {sublabel && (
         <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>{sublabel}</div>
       )}
-    </div>
-  );
-}
-
-function BarCompare({ income, expenses }: { income: number; expenses: number }) {
-  const max = Math.max(income, expenses, 1);
-  const incomePct = Math.round((income / max) * 100);
-  const expensePct = Math.round((expenses / max) * 100);
-  return (
-    <div className="space-y-3">
-      <div>
-        <div className="flex items-center justify-between text-xs mb-1">
-          <span style={{ color: "var(--muted)" }}>Income</span>
-          <span className="font-semibold">{money(income)}</span>
-        </div>
-        <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
-          <div
-            className="h-full rounded-full"
-            style={{ width: `${incomePct}%`, background: "var(--chart-1)", transition: "width 0.4s ease" }}
-          />
-        </div>
-      </div>
-      <div>
-        <div className="flex items-center justify-between text-xs mb-1">
-          <span style={{ color: "var(--muted)" }}>Expenses</span>
-          <span className="font-semibold">{money(expenses)}</span>
-        </div>
-        <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
-          <div
-            className="h-full rounded-full"
-            style={{ width: `${expensePct}%`, background: "var(--chart-4)", transition: "width 0.4s ease" }}
-          />
-        </div>
-      </div>
     </div>
   );
 }
@@ -1026,177 +984,117 @@ function FinanceListCard({
   );
 }
 
-// ─── SVG chart primitives ─────────────────────────────────────────────────────
+// ─── Analytics cards & charts ─────────────────────────────────────────────────
 
-const PAD = { l: 32, r: 8, t: 6, b: 20 };
-
-function yTick(maxVal: number, frac: number, chartH: number, padT: number) {
-  return padT + chartH * (1 - frac);
+// "2026-10" → "Oct 26"
+function monthLabel(month: string) {
+  return new Date(`${month}-01T00:00:00`).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
 
-function StackedBarChart({
-  data, colors, height = 120,
-}: {
-  data: { label: string; stacks: number[] }[];
-  colors: string[];
-  formatTip: (v: number) => string;
-  height?: number;
+function rangeLabel(from: Date, to: Date) {
+  const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return fmt(from) === fmt(to) ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
+}
+
+function MetricCard({ title, description, badge, children }: {
+  title: string; description: string; badge?: string; children: React.ReactNode;
 }) {
-  const sPAD = { l: 72, r: 8, t: 6, b: 20 };
-  const W = 560; const H = height;
-  const cW = W - sPAD.l - sPAD.r;
-  const cH = H - sPAD.t - sPAD.b;
-  const baseline = sPAD.t + cH;
-  const maxVal = Math.max(...data.map((d) => d.stacks.reduce((a, b) => a + b, 0)), 1);
-  const step = cW / Math.max(data.length, 1);
-  const bW = Math.min(32, Math.max(4, step * 0.55));
-
-  const bars = data.map((d, i) => {
-    const cx = sPAD.l + i * step + step / 2;
-    const x = cx - bW / 2;
-    let cumH = 0;
-    const segs = d.stacks.map((v, si) => {
-      const bh = (v / maxVal) * cH;
-      const seg = { si, x, y: baseline - cumH - bh, width: bW, height: bh, color: colors[si] ?? "var(--border)" };
-      cumH += bh;
-      return seg;
-    });
-    return { d, cx, x, segs };
-  });
-
-  const skipEvery = data.length > 14 ? Math.ceil(data.length / 14) : 1;
-
-  const shortVal = (v: number) => {
-    if (v === 0) return "0";
-    if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
-    return String(Math.round(v));
-  };
-
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: "visible" }}>
-      {[0, 0.5, 1].map((f) => {
-        const y = yTick(maxVal, f, cH, sPAD.t);
-        return (
-          <g key={f}>
-            <line x1={sPAD.l} x2={W - sPAD.r} y1={y} y2={y}
-              stroke="var(--border)" strokeWidth={1} strokeDasharray={f === 0 ? "0" : "3 3"} />
-            {f > 0 && (
-              <text x={sPAD.l - 4} y={y + 3.5} textAnchor="end" fontSize={8} fill="var(--muted)">
-                {shortVal(maxVal * f)}
-              </text>
-            )}
-          </g>
-        );
-      })}
-      {bars.map(({ d, cx, segs }, i) => (
-        <g key={d.label}>
-          {segs.map((s) =>
-            s.height > 0 && (
-              <rect key={s.si} x={s.x} y={s.y} width={s.width} height={s.height}
-                fill={s.color} rx={1.5} />
-            )
-          )}
-          {i % skipEvery === 0 && (
-            <text x={cx} y={H - sPAD.b + 12} textAnchor="middle" fontSize={7} fill="var(--muted)">
-              {d.label}
-            </text>
-          )}
-        </g>
-      ))}
-    </svg>
+    <Card>
+      <CardHeader className="flex-row items-start gap-3">
+        <div className="space-y-1">
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </div>
+        {badge && (
+          <CardAction>
+            <span className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium">
+              {badge}
+            </span>
+          </CardAction>
+        )}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }
 
-function LineSparkline({
-  data, color, yMax, height = 80, formatTip,
-}: {
+function MonthRows({ rows }: { rows: { month: string; cells: [string, number][]; value: string }[] }) {
+  return (
+    <div className="mt-4 divide-y divide-border border-t border-border">
+      {rows.map((r) => (
+        <div key={r.month} className="flex items-center justify-between py-2 text-xs">
+          <span className="text-muted-foreground">{monthLabel(r.month)}</span>
+          <div className="flex gap-4">
+            {r.cells.map(([k, v]) => (
+              <span key={k} className="text-muted-foreground">
+                {k} <b className="font-semibold tabular-nums text-foreground">{v}</b>
+              </span>
+            ))}
+            <span className="w-12 text-right font-semibold tabular-nums">{r.value}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MiniLineChart({ data, label, color, yMax, format }: {
   data: { label: string; value: number }[];
+  label: string;
   color: string;
   yMax?: number;
-  height?: number;
-  formatTip: (v: number) => string;
+  format: (v: number) => string;
 }) {
-  const W = 400; const H = height;
-  const cW = W - PAD.l - PAD.r;
-  const cH = H - PAD.t - PAD.b;
-  const maxVal = yMax ?? Math.max(...data.map((d) => d.value), 1);
-  const step = data.length > 1 ? cW / (data.length - 1) : cW;
-
-  const pts = data.map((d, i) => ({
-    x: PAD.l + i * step,
-    y: PAD.t + cH * (1 - d.value / maxVal),
-    d,
-  }));
-
-  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
-  const areaPath = pts.length
-    ? `${linePath} L${pts.at(-1)!.x},${PAD.t + cH} L${pts[0].x},${PAD.t + cH}Z`
-    : "";
-
+  const config = { value: { label, color } } satisfies ChartConfig;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: "visible" }}>
-      {[0, 0.5, 1].map((f) => {
-        const y = yTick(maxVal, f, cH, PAD.t);
-        return (
-          <g key={f}>
-            <line x1={PAD.l} x2={W - PAD.r} y1={y} y2={y}
-              stroke="var(--border)" strokeWidth={1} strokeDasharray={f === 0 ? "0" : "3 3"} />
-            <text x={PAD.l - 4} y={y + 3.5} textAnchor="end" fontSize={8} fill="var(--muted)">
-              {formatTip(maxVal * f)}
-            </text>
-          </g>
-        );
-      })}
-      {areaPath && <path d={areaPath} fill={color} fillOpacity={0.08} />}
-      {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />}
-      {pts.map((p) => (
-        <g key={p.d.label}>
-          <circle cx={p.x} cy={p.y} r={2.5} fill={color} />
-          <text x={p.x} y={H - PAD.b + 12} textAnchor="middle" fontSize={7} fill="var(--muted)">{p.d.label}</text>
-        </g>
-      ))}
-    </svg>
+    <ChartContainer config={config} className="aspect-auto h-[160px] w-full">
+      <LineChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} minTickGap={16} />
+        <YAxis tickLine={false} axisLine={false} width={40} domain={[0, yMax ?? "auto"]}
+          tickFormatter={(v: number) => format(v)} />
+        <ChartTooltip
+          cursor={{ strokeDasharray: "4 4" }}
+          content={(props) => (
+            <ChartTooltipContent active={props.active} payload={props.payload as never}
+              label={props.label} valueFormatter={(v) => format(v)} />
+          )}
+        />
+        <Line dataKey="value" type="monotone" stroke="var(--color-value)" strokeWidth={2}
+          dot={{ r: 3, fill: "var(--color-value)", strokeWidth: 0 }}
+          activeDot={{ r: 5, fill: "var(--color-value)", stroke: "var(--surface)", strokeWidth: 2 }}
+          isAnimationActive={false} />
+      </LineChart>
+    </ChartContainer>
   );
 }
 
-function ActiveMembersChart({ data, height = 80 }: { data: ActiveMembersPoint[]; height?: number }) {
-  const W = 400; const H = height;
-  const cW = W - PAD.l - PAD.r;
-  const cH = H - PAD.t - PAD.b;
-  const maxVal = Math.max(...data.map((d) => d.totalSubscribers), 1);
-  const bW = Math.max(3, Math.floor(cW / data.length) - 4);
-  const step = cW / data.length;
-
+function ActiveMembersChart({ data }: { data: ActiveMembersPoint[] }) {
+  const config = {
+    active: { label: "Active", color: "var(--chart-1)" },
+    inactive: { label: "Inactive", color: "var(--border)" },
+  } satisfies ChartConfig;
+  const rows = data.map((d) => ({
+    label: monthLabel(d.month),
+    active: d.activeSubscribers,
+    inactive: Math.max(0, d.totalSubscribers - d.activeSubscribers),
+  }));
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: "visible" }}>
-      {[0, 0.5, 1].map((f) => {
-        const y = yTick(maxVal, f, cH, PAD.t);
-        return (
-          <g key={f}>
-            <line x1={PAD.l} x2={W - PAD.r} y1={y} y2={y}
-              stroke="var(--border)" strokeWidth={1} strokeDasharray={f === 0 ? "0" : "3 3"} />
-            <text x={PAD.l - 4} y={y + 3.5} textAnchor="end" fontSize={8} fill="var(--muted)">
-              {Math.round(maxVal * f)}
-            </text>
-          </g>
-        );
-      })}
-      {data.map((d, i) => {
-        const x = PAD.l + i * step + (step - bW) / 2;
-        const inactiveH = Math.max(0, ((d.totalSubscribers - d.activeSubscribers) / maxVal) * cH);
-        const activeH = Math.max(0, (d.activeSubscribers / maxVal) * cH);
-        return (
-          <g key={d.month}>
-            <rect x={x} y={PAD.t + cH - inactiveH - activeH} width={bW} height={inactiveH}
-              fill="var(--border)" rx={1.5} />
-            <rect x={x} y={PAD.t + cH - activeH} width={bW} height={activeH}
-              fill="var(--brand)" rx={1.5} />
-            <text x={x + bW / 2} y={H - PAD.b + 12} textAnchor="middle" fontSize={7} fill="var(--muted)">
-              {d.month.slice(5)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <ChartContainer config={config} className="aspect-auto h-[160px] w-full"
+      style={{ "--hover-fill": "color-mix(in srgb, var(--text) 5%, transparent)" } as React.CSSProperties}>
+      <BarChart data={rows} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+        <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} />
+        <ChartTooltip
+          content={(props) => (
+            <ChartTooltipContent active={props.active} payload={props.payload as never} label={props.label} />
+          )}
+        />
+        <Bar dataKey="active" stackId="m" fill="var(--color-active)" maxBarSize={36} isAnimationActive={false} />
+        <Bar dataKey="inactive" stackId="m" fill="var(--color-inactive)" radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+      </BarChart>
+    </ChartContainer>
   );
 }
