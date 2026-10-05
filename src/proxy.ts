@@ -1,7 +1,12 @@
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 export async function proxy(request: NextRequest) {
+  // Server-to-server endpoints (used by Zad Customer Services) authenticate
+  // with a bearer secret inside the route, not with a staff login.
+  if (request.nextUrl.pathname.startsWith("/api/internal/")) {
+    return NextResponse.next();
+  }
   return await updateSession(request);
 }
 
